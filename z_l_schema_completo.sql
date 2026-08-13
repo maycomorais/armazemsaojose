@@ -174,6 +174,7 @@ CREATE TABLE IF NOT EXISTS configuracoes (
   nome_alias                  TEXT          DEFAULT '',
   maquininhas_cartao          JSONB         DEFAULT '[]'::JSONB,
   alias_qr_url                TEXT          DEFAULT '',
+  qr_py_url                   TEXT          DEFAULT '',
   -- Localização e Delivery
   coord_lat                   DOUBLE PRECISION DEFAULT 0,
   coord_lng                   DOUBLE PRECISION DEFAULT 0,
@@ -186,6 +187,9 @@ CREATE TABLE IF NOT EXISTS configuracoes (
   cotacao_real                NUMERIC(10,2) DEFAULT 1100,
   taxa_motoboy_base           INTEGER       DEFAULT 0,
   ajuda_combustivel           INTEGER       DEFAULT 0,
+  -- Taxas para cartão BR
+  taxa_debito                 NUMERIC(10,2) DEFAULT 0,
+  taxa_credito                NUMERIC(10,2) DEFAULT 0,
   -- Horários
   horarios_semanais           JSONB         DEFAULT NULL,
   horario_extra_hoje          JSONB         DEFAULT NULL,
@@ -329,6 +333,15 @@ CREATE TABLE IF NOT EXISTS produtos (
   promo_valor        NUMERIC(14,2) DEFAULT NULL,
   -- Código de barras (EAN-13, EAN-8, Code128, etc.)
   codigo_barras      TEXT    DEFAULT NULL,
+  -- Campos adicionados para compatibilidade com admin.js
+  preco_compra       INTEGER DEFAULT NULL,          -- preço de custo
+  perecivel          BOOLEAN DEFAULT FALSE,
+  data_validade      DATE    DEFAULT NULL,
+  data_validate      DATE    DEFAULT NULL,          -- compatibilidade com erro anterior
+  validade           DATE    DEFAULT NULL,          -- usado em renderizarCardsProdutos()
+  em_promocao        BOOLEAN DEFAULT FALSE,
+  preco_original     INTEGER DEFAULT NULL,          -- preço sem desconto para promoções
+  -- Timestamps
   created_at         TIMESTAMPTZ DEFAULT NOW(),
   updated_at         TIMESTAMPTZ DEFAULT NOW()
 );
@@ -482,9 +495,10 @@ CREATE TABLE IF NOT EXISTS clientes (
   nome             TEXT NOT NULL,
   telefone         TEXT UNIQUE NOT NULL,
   data_nascimento  DATE,
-  saldo_cashback   NUMERIC DEFAULT 0,
+  cashback_saldo   NUMERIC DEFAULT 0,      -- renomeado de saldo_cashback
   total_gasto      NUMERIC DEFAULT 0,
-  created_at       TIMESTAMPTZ DEFAULT NOW()
+  created_at       TIMESTAMPTZ DEFAULT NOW(),
+  nascimento       DATE                    -- compatibilidade com app.js
 );
 
 CREATE TABLE IF NOT EXISTS cashback_transacoes (
@@ -550,6 +564,10 @@ CREATE TABLE IF NOT EXISTS pedidos (
   cupom_codigo                  TEXT        DEFAULT NULL,
   push_subscription             JSONB       DEFAULT NULL,
   entrega_confirmada_em         TIMESTAMPTZ DEFAULT NULL,
+  -- Controle de estoque descontado (evita duplicidade)
+  estoque_descontado            BOOLEAN     DEFAULT FALSE,
+  -- Chave de idempotência (evita duplicação de pedidos)
+  idempotency_key               TEXT        DEFAULT NULL,
   -- Timestamps do ciclo de vida
   tempo_recebido                TIMESTAMPTZ DEFAULT NOW(),
   tempo_confirmado              TIMESTAMPTZ DEFAULT NULL,
@@ -731,6 +749,7 @@ ALTER TABLE public.configuracoes
   ADD COLUMN IF NOT EXISTS nome_alias                TEXT          DEFAULT '',
   ADD COLUMN IF NOT EXISTS maquininhas_cartao         JSONB         DEFAULT '[]'::JSONB,
   ADD COLUMN IF NOT EXISTS alias_qr_url              TEXT          DEFAULT '',
+  ADD COLUMN IF NOT EXISTS qr_py_url                 TEXT          DEFAULT '',
   ADD COLUMN IF NOT EXISTS coord_lat                 DOUBLE PRECISION DEFAULT 0,
   ADD COLUMN IF NOT EXISTS coord_lng                 DOUBLE PRECISION DEFAULT 0,
   ADD COLUMN IF NOT EXISTS tabela_frete              JSONB         DEFAULT NULL,
@@ -741,6 +760,8 @@ ALTER TABLE public.configuracoes
   ADD COLUMN IF NOT EXISTS cotacao_real              NUMERIC(10,2) DEFAULT 1100,
   ADD COLUMN IF NOT EXISTS taxa_motoboy_base         INTEGER       DEFAULT 0,
   ADD COLUMN IF NOT EXISTS ajuda_combustivel         INTEGER       DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS taxa_debito               NUMERIC(10,2) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS taxa_credito              NUMERIC(10,2) DEFAULT 0,
   ADD COLUMN IF NOT EXISTS horarios_semanais         JSONB         DEFAULT NULL,
   ADD COLUMN IF NOT EXISTS horario_extra_hoje        JSONB         DEFAULT NULL,
   ADD COLUMN IF NOT EXISTS banner_imagem             TEXT          DEFAULT '',
@@ -779,7 +800,15 @@ ALTER TABLE public.produtos
   ADD COLUMN IF NOT EXISTS promo_ativo       BOOLEAN       DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS promo_tipo        TEXT          DEFAULT 'percent',
   ADD COLUMN IF NOT EXISTS promo_valor       NUMERIC(14,2) DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS codigo_barras     TEXT          DEFAULT NULL;
+  ADD COLUMN IF NOT EXISTS codigo_barras     TEXT          DEFAULT NULL,
+  -- Novas colunas para compatibilidade com admin.js
+  ADD COLUMN IF NOT EXISTS preco_compra      INTEGER       DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS perecivel         BOOLEAN       DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS data_validade     DATE          DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS data_validate     DATE          DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS validade          DATE          DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS em_promocao       BOOLEAN       DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS preco_original    INTEGER       DEFAULT NULL;
 
 -- categorias
 ALTER TABLE public.categorias
@@ -812,7 +841,9 @@ ALTER TABLE public.pedidos
   ADD COLUMN IF NOT EXISTS tempo_preparo_iniciado      TIMESTAMPTZ DEFAULT NULL,
   ADD COLUMN IF NOT EXISTS tempo_pronto                TIMESTAMPTZ DEFAULT NULL,
   ADD COLUMN IF NOT EXISTS tempo_saiu_entrega          TIMESTAMPTZ DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS tempo_entregue              TIMESTAMPTZ DEFAULT NULL;
+  ADD COLUMN IF NOT EXISTS tempo_entregue              TIMESTAMPTZ DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS estoque_descontado          BOOLEAN     DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS idempotency_key             TEXT        DEFAULT NULL;
 
 -- inventario
 ALTER TABLE public.inventario
@@ -867,6 +898,30 @@ SET
 WHERE descricao LIKE 'Cód: %'
   AND (codigo_barras IS NULL OR codigo_barras = '');
 
+-- clientes: garante cashback_saldo e renomeia se necessário
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'clientes' AND column_name = 'cashback_saldo'
+  ) THEN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'clientes' AND column_name = 'saldo_cashback'
+    ) THEN
+      ALTER TABLE public.clientes RENAME COLUMN saldo_cashback TO cashback_saldo;
+    ELSE
+      ALTER TABLE public.clientes ADD COLUMN cashback_saldo NUMERIC DEFAULT 0;
+    END IF;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'clientes' AND column_name = 'nascimento'
+  ) THEN
+    ALTER TABLE public.clientes ADD COLUMN nascimento DATE;
+  END IF;
+END $$;
+
 
 -- ═══════════════════════════════════════════════════════════════════════
 -- §13  ÍNDICES
@@ -879,6 +934,7 @@ CREATE INDEX IF NOT EXISTS idx_pedidos_garcom        ON pedidos (garcom_id) WHER
 CREATE INDEX IF NOT EXISTS idx_pedidos_garcom_status ON pedidos (garcom_id, status) WHERE garcom_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_pedidos_filial_id     ON pedidos (filial_id);
 CREATE INDEX IF NOT EXISTS idx_pedidos_push_subscription ON pedidos ((push_subscription IS NOT NULL)) WHERE push_subscription IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_pedidos_idempotency   ON pedidos(idempotency_key) WHERE idempotency_key IS NOT NULL;
 
 -- Produtos
 CREATE INDEX IF NOT EXISTS idx_produtos_cat      ON produtos (categoria_slug);
@@ -1259,8 +1315,3 @@ WHERE codigo_barras IS NOT NULL AND codigo_barras <> '';
 --  idempotentes (CREATE IF NOT EXISTS, ADD COLUMN IF NOT EXISTS,
 --  ON CONFLICT DO NOTHING, DROP + CREATE para triggers/functions).
 -- ═══════════════════════════════════════════════════════════════════════
-ALTER TABLE clientes
-  ADD COLUMN nascimento DATE;
-
-  ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS idempotency_key text;
-CREATE INDEX IF NOT EXISTS idx_pedidos_idempotency ON pedidos(idempotency_key) WHERE idempotency_key IS NOT NULL;
