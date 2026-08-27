@@ -5,6 +5,63 @@ if (typeof t === "undefined") {
   };
 }
 
+// ============================================
+// COTAÇÃO REAL - FONTE ÚNICA
+// ============================================
+let _cotacaoCache = null;
+let _cotacaoTimestamp = 0;
+const _COTACAO_TTL = 60000; // 60 segundos
+
+/**
+ * Obtém a cotação do Real (Gs/R$) da tabela configuracoes.
+ * - Usa cache com TTL para não bater no banco a cada clique.
+ * - Se já tiver carregado uma cotação na sessão, usa a mais recente.
+ */
+async function getCotacaoReal() {
+  const agora = Date.now();
+  if (_cotacaoCache !== null && (agora - _cotacaoTimestamp) < _COTACAO_TTL) {
+    return _cotacaoCache;
+  }
+
+  try {
+    const { data, error } = await supa
+      .from('configuracoes')
+      .select('cotacao_real')
+      .maybeSingle();
+
+    if (error) throw error;
+    const val = data?.cotacao_real ?? 1100;
+    _cotacaoCache = Number(val);
+    _cotacaoTimestamp = agora;
+    return _cotacaoCache;
+  } catch (e) {
+    console.warn('[getCotacaoReal] erro, usando fallback 1100:', e.message);
+    return 1100;
+  }
+}
+
+/**
+ * Converte um valor em Guaranis para Reais, formatado com 2 casas decimais.
+ * @param {number} gs - Valor em Guaranis
+ * @param {number} cotacao - (opcional) taxa de câmbio, se não informada busca automaticamente
+ * @returns {Promise<string>} - Ex: "R$ 12,34"
+ */
+async function formatarReais(gs, cotacao) {
+  const taxa = cotacao ?? await getCotacaoReal();
+  if (taxa <= 0) return 'R$ --';
+  const brl = gs / taxa;
+  return `R$ ${brl.toFixed(2).replace('.', ',')}`;
+}
+
+/**
+ * Retorna o valor numérico em Reais (para cálculos).
+ */
+async function valorEmReais(gs, cotacao) {
+  const taxa = cotacao ?? await getCotacaoReal();
+  if (taxa <= 0) return 0;
+  return gs / taxa;
+}
+
 // =========================================
 // 1. CONSTANTES E INICIALIZAÇÃO
 // =========================================
@@ -5046,158 +5103,86 @@ async function salvarProduto() {
     const fileInput = document.getElementById("prod-img-file");
     let urlFinal = document.getElementById("prod-img").value;
 
-    // ── Upload para o Cloudinary ──────────────────────────────
-    console.log(
-      "[salvarProduto] fileInput.files.length:",
-      fileInput.files.length,
-      "| urlFinal atual:",
-      urlFinal,
-    );
     if (fileInput.files.length > 0) {
       btn.innerText = "📤 Enviando imagem...";
       try {
         urlFinal = await uploadImageToImgbb(fileInput.files[0]);
-        // Atualiza o campo de URL para refletir o resultado
         document.getElementById("prod-img").value = urlFinal;
         document.getElementById("img-preview").src = urlFinal;
         document.getElementById("box-preview").style.display = "block";
       } catch (uploadErr) {
-        btn.disabled = false;
-        btn.innerText = "Salvar Produto";
-        alert(
-          "❌ Falha no upload da imagem:\n\n" +
-            uploadErr.message +
-            "\n\nSe quiser, cole a URL da imagem diretamente no campo de URL e salve novamente.",
-        );
+        alert("❌ Falha no upload da imagem: " + uploadErr.message);
         return;
       }
-    } else if (urlFinal && urlFinal.trim()) {
-      // URL digitada manualmente — usa direto, sem upload
-      urlFinal = urlFinal.trim();
     }
 
     btn.innerText = "Salvando...";
 
-    const tipo = document.getElementById("prod-tipo-builder").value || "padrao";
+    // ── Validação básica ──
+    const nome = document.getElementById("prod-nome").value.trim();
+    if (!nome) { alert("⚠️ O nome do produto é obrigatório."); return; }
+    const cat = document.getElementById("prod-cat").value;
+    if (!cat) { alert("⚠️ Selecione uma categoria."); return; }
 
-    // Valida campos obrigatórios
-    const _nomeVal = document.getElementById("prod-nome").value.trim();
-    if (!_nomeVal) {
-      alert("⚠️ O nome do produto é obrigatório.");
-      return;
-    }
-    const _catVal = document.getElementById("prod-cat").value;
-    if (!_catVal) {
-      alert("⚠️ Selecione uma categoria para o produto.");
-      return;
-    }
+    // ── VENDA POR KG ──
+    const vendaKgAtiva = document.getElementById("prod-venda-kg")?.checked || false;
+    let precoKg = 0;
+    let montagemConfig = null;
 
-    // ── Combo: exige ao menos 1 componente válido ──────────────
-    const _tipoProdutoVal = document.getElementById("prod-tipo-produto")?.value || "simples";
-    if (_tipoProdutoVal === "combo" && comboColetarComponentes().length === 0) {
-      alert("⚠️ Adicione ao menos um componente ao combo.");
-      return;
-    }
-
-    // Preço base — usa dataset.valorNumerico (setado pela máscara) para evitar que
-    // parseInt("12.000") retorne 12 ao encontrar o ponto separador de milhar paraguaio
-    const _precoEl = document.getElementById("prod-preco");
-    let precoBase =
-      parseInt(
-        _precoEl?.dataset?.valorNumerico ||
-          (_precoEl?.value || "").replace(/\D/g, "") ||
-          "0",
-        10,
-      ) || 0;
-    if (document.getElementById("prod-venda-kg")?.checked) {
-      const pkgVal =
-        parseFloat(document.getElementById("prod-preco-kg")?.value) || 0;
-      if (pkgVal > 0) precoBase = pkgVal;
-    }
-
-    let precoOriginal = null;
-    let emPromocao = false;
-
-    if (document.getElementById("prod-promo-ativo")?.checked) {
-      const tipo = document.getElementById("prod-promo-tipo")?.value;
-      const valor =
-        parseFloat(document.getElementById("prod-promo-valor")?.value) || 0;
-
-      if (valor > 0) {
-        emPromocao = true;
-        precoOriginal = precoBase; // guarda o preço original
-
-        if (tipo === "percent") {
-          if (valor >= 100) {
-            alert("⚠️ Desconto percentual inválido.");
-            return;
-          }
-          precoBase = Math.round(precoBase * (1 - valor / 100)); // calcula o promocional
-        } else {
-          // fixo
-          precoBase = Math.max(0, precoBase - valor); // subtrai o desconto fixo
-        }
+    if (vendaKgAtiva) {
+      const pkEl = document.getElementById("prod-preco-kg");
+      precoKg = parseFloat(pkEl?.value) || 0;
+      if (precoKg <= 0) {
+        alert("⚠️ Informe o preço por Kg para ativar a venda por peso.");
+        return;
       }
+      montagemConfig = {
+        __tipo: "kg",
+        preco_kg: precoKg
+      };
+      // O preço base do produto será o preço por Kg (usado como referência)
+      document.getElementById("prod-preco").value = precoKg;
     }
+
+    // ── Log para debug ──
+    console.log("[salvarProduto] vendaKgAtiva:", vendaKgAtiva);
+    console.log("[salvarProduto] precoKg:", precoKg);
+    console.log("[salvarProduto] montagemConfig:", montagemConfig);
+
+    // ── Monta objeto dados ──
     const dados = {
-      nome: document.getElementById("prod-nome").value,
+      nome: nome,
       descricao: document.getElementById("prod-desc").value,
-      preco: precoBase,
-      promo_ativo:
-        document.getElementById("prod-promo-ativo")?.checked || false,
-      promo_tipo: document.getElementById("prod-promo-tipo")?.value || null,
-      promo_valor:
-        parseFloat(document.getElementById("prod-promo-valor")?.value) || null,
-      em_promocao: emPromocao,
-      preco_original: precoOriginal,
-      categoria_slug: document.getElementById("prod-cat").value || null,
+      preco: parseFloat(document.getElementById("prod-preco").value) || 0,
+      categoria_slug: cat,
       subcategoria_slug: document.getElementById("prod-subcat")?.value || null,
       imagem_url: urlFinal,
       e_montavel: false,
-      montagem_config: null,
+      montagem_config: montagemConfig,  // ← CAMPO CRÍTICO
       ativo: true,
-      somente_balcao:
-        document.getElementById("prod-somente-balcao")?.checked || false,
-      // ── Código de barras ──────────────────────────────────
-      codigo_barras:
-        document.getElementById("prod-codigo-barras")?.value?.trim() || null,
-      // ── Varejo ────────────────────────────────────────────
-      unidade_venda:
-        document.getElementById("prod-unidade-venda")?.value || null,
+      somente_balcao: document.getElementById("prod-somente-balcao")?.checked || false,
+      codigo_barras: document.getElementById("prod-codigo-barras")?.value?.trim() || null,
+      unidade_venda: document.getElementById("prod-unidade-venda")?.value || null,
       destaque: document.getElementById("prod-destaque")?.checked || false,
-      // Estoque direto (sem vínculo com inventário) — combos nunca têm
-      // estoque próprio, o estoque vem dos componentes.
-      estoque_qtd:
-        _tipoProdutoVal !== "combo" && document.getElementById("prod-tem-estoque")?.checked
-          ? parseInt(document.getElementById("prod-estoque-qtd")?.value) || 0
-          : null,
-      // ── Combos / fracionamento ─────────────────────────────
-      tipo_produto: _tipoProdutoVal,
-      fracionavel:
-        _tipoProdutoVal !== "combo" &&
-        (document.getElementById("prod-fracionavel")?.checked || false),
-      unidade_fracionamento:
-        _tipoProdutoVal !== "combo" && document.getElementById("prod-fracionavel")?.checked
-          ? document.getElementById("prod-unidade-fracionamento")?.value || "un"
-          : null,
-      // ── Preço de compra / custo ───────────────────────────
+      estoque_qtd: document.getElementById("prod-tem-estoque")?.checked
+        ? parseInt(document.getElementById("prod-estoque-qtd")?.value) || 0
+        : null,
+      tipo_produto: document.getElementById("prod-tipo-produto")?.value || "simples",
+      fracionavel: document.getElementById("prod-fracionavel")?.checked || false,
+      unidade_fracionamento: document.getElementById("prod-fracionavel")?.checked
+        ? document.getElementById("prod-unidade-fracionamento")?.value || "un"
+        : null,
       preco_compra: (() => {
         const el = document.getElementById("prod-preco-compra");
         if (!el) return null;
-        const raw =
-          el.dataset.valorNumerico ||
-          (el.value || "").replace(/\D/g, "") ||
-          "0";
+        const raw = el.dataset.valorNumerico || (el.value || "").replace(/\D/g, "") || "0";
         const v = parseInt(raw, 10);
         return v > 0 ? v : null;
       })(),
-      // ── Perecível ─────────────────────────────────────────
       perecivel: document.getElementById("prod-perecivel")?.checked || false,
-      data_validade:
-        document.getElementById("prod-perecivel")?.checked &&
-        document.getElementById("prod-data-validade")?.value
-          ? document.getElementById("prod-data-validade").value
-          : null,
+      data_validade: document.getElementById("prod-perecivel")?.checked && document.getElementById("prod-data-validade")?.value
+        ? document.getElementById("prod-data-validade").value
+        : null,
     };
 
     let prodIdSalvo = id ? parseInt(id) : null;
@@ -5208,10 +5193,7 @@ async function salvarProduto() {
         .update(dados)
         .eq("id", parseInt(id));
       if (errUpdate) throw new Error("Erro ao salvar: " + errUpdate.message);
-      console.log(
-        "[salvarProduto] Produto atualizado. imagem_url:",
-        dados.imagem_url,
-      );
+      prodIdSalvo = parseInt(id);
     } else {
       const { data: novoProd, error: errInsert } = await supa
         .from("produtos")
@@ -5222,44 +5204,23 @@ async function salvarProduto() {
       prodIdSalvo = novoProd.id;
     }
 
-    // ── Salva componentes do combo ─────────────────────────────
-    if (prodIdSalvo && _tipoProdutoVal === "combo") {
-      await comboSalvarComponentes(prodIdSalvo);
-    }
-
-    // ── Salva variações de estoque (varejo) ───────────────────
-    // ── Salva variações de estoque (varejo) ───────────────────
-if (prodIdSalvo && document.getElementById("secao-variacoes-estoque")) {
-  await veSalvarVariacoes(prodIdSalvo);
-
-  // === NOVA PARTE: Atualiza montagem_config para o PDV ===
-  const { data: variacoes } = await supa
-    .from("produto_variacoes")
-    .select("id, nome, preco_adicional, preco_absoluto, ativo, ordem")
-    .eq("produto_id", prodIdSalvo)
-    .order("ordem");
-
-  if (variacoes && variacoes.length > 0) {
-    const config = {
-      __tipo: "variacoes",
-      variacoes: variacoes.map(v => ({
-        id: v.id,
-        nome: v.nome,
-        preco: v.preco_adicional || 0,
-        preco_absoluto: v.preco_absoluto || false,
-        ativo: v.ativo !== false,
-      }))
-    };
-    await supa
+    // ── Após salvar, busca o produto de volta para confirmar ──
+    const { data: confirmado } = await supa
       .from("produtos")
-      .update({ montagem_config: config })
-      .eq("id", prodIdSalvo);
-  }
-}
-    // ── Fim variações ─────────────────────────────────────────
+      .select("montagem_config")
+      .eq("id", prodIdSalvo)
+      .single();
+
+    console.log("[salvarProduto] CONFIRMADO no banco:", confirmado?.montagem_config);
+
+    // ── Salva variações se existir ──
+    if (document.getElementById("secao-variacoes-estoque")) {
+      await veSalvarVariacoes(prodIdSalvo);
+    }
 
     fecharModal("modal-produto");
     carregarProdutos();
+    alert("✅ Produto salvo com sucesso!");
   } catch (e) {
     alert("Erro: " + e.message);
   } finally {
@@ -5496,15 +5457,29 @@ async function abrirModalProduto(produto = null, tipoInicial = null) {
     }
     // ── Fim Combo ─────────────────────────────────────────────
 
-    // Venda por Kg
-    const eKg = produto.unidade_venda === "kg" && produto.preco_kg > 0;
-    const _vkEl = document.getElementById("prod-venda-kg");
-    if (_vkEl) {
-      _vkEl.checked = eKg;
-      toggleVendaKg(eKg);
+    // ========== VENDA POR KG ==========
+    // Verifica se montagem_config existe e é um objeto ou string JSON
+    let cfg = produto.montagem_config;
+    if (typeof cfg === "string") {
+      try { cfg = JSON.parse(cfg); } catch (_) { cfg = null; }
     }
-    const _pkEl = document.getElementById("prod-preco-kg");
-    if (_pkEl && produto.preco_kg) _pkEl.value = produto.preco_kg;
+    const isKg = cfg && cfg.__tipo === "kg";
+    const precoKg = isKg ? (cfg.preco_kg || 0) : 0;
+
+    console.log("[abrirModalProduto] cfg:", cfg);
+    console.log("[abrirModalProduto] isKg:", isKg, "precoKg:", precoKg);
+
+    const vkEl = document.getElementById("prod-venda-kg");
+    if (vkEl) {
+      vkEl.checked = isKg && precoKg > 0;
+      toggleVendaKg(vkEl.checked);
+    }
+    const pkEl = document.getElementById("prod-preco-kg");
+    if (pkEl) {
+      pkEl.value = precoKg > 0 ? precoKg : "";
+    }
+    // ===================================
+
     // ── Perecível ──────────────────────────────────────────
     const _perEl = document.getElementById("prod-perecivel");
     if (_perEl) {
@@ -7859,7 +7834,6 @@ function _lerGradeSemanal() {
 }
 
 async function carregarConfiguracoes() {
-  // Gestão de cupons: apenas dono, gerente e adminMaster
   const _cardCupons = document.getElementById("card-cupons-cfg");
   if (_cardCupons)
     _cardCupons.style.display = ["dono", "gerente", "adminMaster"].includes(
@@ -7868,7 +7842,6 @@ async function carregarConfiguracoes() {
       ? ""
       : "none";
 
-  // Painel adminMaster
   const _cardAM = document.getElementById("card-adminmaster-cfg");
   if (_cardAM) {
     _cardAM.style.display = perfilUsuario === "adminMaster" ? "" : "none";
@@ -7880,15 +7853,20 @@ async function carregarConfiguracoes() {
   _renderTabelaFrete((data && data.tabela_frete) || null);
   if (!data) return;
 
+  // ========== ATUALIZA CACHE DA COTAÇÃO ==========
+  if (data.cotacao_real) {
+    _cotacaoCache = Number(data.cotacao_real);
+    COTACAO_REAL = _cotacaoCache; // mantém compatibilidade
+  }
+  // ================================================
+
   const s = (id, val) => {
     const el = document.getElementById(id);
     if (el) el.value = val ?? "";
   };
-  // Operação
   s("cfg-aberta", data.loja_aberta ? "true" : "false");
   s("cfg-cotacao", data.cotacao_real);
 
-  // Identidade da loja
   s("cfg-nome-restaurante", data.nome_restaurante);
   s("cfg-descricao-loja", data.descricao_loja);
   s("cfg-url-loja", data.url_loja);
@@ -7896,17 +7874,14 @@ async function carregarConfiguracoes() {
   s("cfg-whatsapp-loja", data.whatsapp_loja);
   s("cfg-logo-url", data.logo_url || data.icone_url);
 
-  // Pagamento
   s("cfg-chave-pix", data.chave_pix);
   s("cfg-nome-pix", data.nome_pix);
   s("cfg-dados-alias", data.dados_alias);
   s("cfg-nome-alias", data.nome_alias);
 
-  // Localização
   s("cfg-coord-lat", data.coord_lat);
   s("cfg-coord-lng", data.coord_lng);
 
-  // Banner 1
   s("cfg-banner-id", data.banner_produto_id || "");
   s("cfg-banner-img", data.banner_imagem || "");
   s("cfg-banner-desc-tipo", data.banner_desconto_tipo || "percentual");
@@ -7917,7 +7892,6 @@ async function carregarConfiguracoes() {
     if (prev) prev.src = data.banner_imagem;
     if (box) box.style.display = "block";
   }
-  // Banner 2
   s("cfg-banner2-id", data.banner2_produto_id || "");
   s("cfg-banner2-img", data.banner2_imagem || "");
   s("cfg-banner2-desc-tipo", data.banner2_desconto_tipo || "percentual");
@@ -7929,7 +7903,6 @@ async function carregarConfiguracoes() {
     if (box2) box2.style.display = "block";
   }
 
-  // Visual
   const sc = (id, val) => {
     const el = document.getElementById(id);
     if (el && val) el.value = val;
@@ -7959,7 +7932,6 @@ async function carregarConfiguracoes() {
     iconePreview.style.display = "block";
   }
 
-  // Globals
   if (data.nome_restaurante) NOME_RESTAURANTE = data.nome_restaurante;
   if (data.whatsapp_loja) WHATSAPP_LOJA_CFG = data.whatsapp_loja;
   if (data.coord_lat) COORD_LOJA.lat = parseFloat(data.coord_lat);
@@ -7972,7 +7944,6 @@ async function carregarConfiguracoes() {
   await carregarExtrasGlobaisAdmin();
   await _carregarMaquininhas();
 
-  // Limite de distância e maquininhas
   s("cfg-limite-distancia", data.limite_distancia_km ?? "");
   s("cfg-taxa-motoboy-base", data.taxa_motoboy_base ?? 0);
   TAXA_MOTOBOY = data.taxa_motoboy_base ?? 0;
@@ -8001,7 +7972,6 @@ async function salvarConfiguracoes() {
     banner2_desconto_tipo: g("cfg-banner2-desc-tipo") || null,
     banner2_desconto_valor: parseFloat(g("cfg-banner2-desc-valor")) || null,
     horarios_semanais: _lerGradeSemanal(),
-    // Identidade
     nome_restaurante: g("cfg-nome-restaurante") || "",
     descricao_loja: g("cfg-descricao-loja") || "",
     url_loja: g("cfg-url-loja") || "",
@@ -8009,21 +7979,16 @@ async function salvarConfiguracoes() {
     whatsapp_loja: (g("cfg-whatsapp-loja") || "").replace(/\D/g, ""),
     logo_url: g("cfg-logo-url") || "",
     icone_url: g("cfg-logo-url") || "",
-    // Pagamento
     chave_pix: g("cfg-chave-pix") || "",
     nome_pix: g("cfg-nome-pix") || "",
     dados_alias: g("cfg-dados-alias") || "",
     nome_alias: g("cfg-nome-alias") || "",
-    // Localização
     coord_lat: parseFloat(g("cfg-coord-lat")) || 0,
     coord_lng: parseFloat(g("cfg-coord-lng")) || 0,
-    // Motoboy
     taxa_motoboy_base: parseInt(g("cfg-taxa-motoboy-base")) || 0,
-    // Visual
     cor_primaria: g("cfg-cor-primaria") || "#1a7a2e",
   };
 
-  // Aplica globals imediatamente
   NOME_RESTAURANTE = dados.nome_restaurante;
   WHATSAPP_LOJA_CFG = dados.whatsapp_loja;
   COORD_LOJA.lat = dados.coord_lat;
@@ -8033,6 +7998,10 @@ async function salvarConfiguracoes() {
   NOME_PIX_CFG = dados.nome_pix;
   DADOS_ALIAS_CFG = dados.dados_alias;
   NOME_ALIAS_CFG = dados.nome_alias;
+
+  // ========== ATUALIZA CACHE DA COTAÇÃO ==========
+  _cotacaoCache = dados.cotacao_real;
+  // ================================================
 
   const { error } = await supa.from("configuracoes").update(dados).gt("id", 0);
   if (error) alert("Erro: " + error.message);
@@ -9033,7 +9002,9 @@ async function carregarPDV() {
     .from("configuracoes")
     .select("cotacao_real, taxa_debito, taxa_credito")
     .maybeSingle();
-  if (cfg?.cotacao_real) _cotacaoPDV = Number(cfg.cotacao_real);
+  if (cfg?.cotacao_real) {
+    _cotacaoCache = Number(cfg.cotacao_real);
+  }
   if (cfg?.taxa_debito != null) _taxaDebitoPDV = Number(cfg.taxa_debito);
   if (cfg?.taxa_credito != null) _taxaCreditoPDV = Number(cfg.taxa_credito);
   // Aplica visibilidade das formas de pagamento no PDV
@@ -9550,13 +9521,13 @@ function _pdvMostrarToast(msg, cor, duracao) {
 }
 
 function adicionarItemPDV(p) {
-  // Combo/Kit → resolve componentes (e eventual escolha de variação) antes de adicionar
+  // Combo/Kit → resolve componentes
   if (p.tipo_produto === "combo") {
     _pdvAbrirComboVenda(p);
     return;
   }
 
-  // montagem_config pode chegar como string JSON de bancos antigos
+  // montagem_config pode chegar como string JSON
   let cfg = p.montagem_config;
   if (typeof cfg === "string") {
     try {
@@ -9567,9 +9538,18 @@ function adicionarItemPDV(p) {
   }
   const tipo = cfg && !Array.isArray(cfg) && cfg.__tipo ? cfg.__tipo : null;
 
-  // Kg → modal de peso/balança
+  console.log("[adicionarItemPDV] Produto:", p.nome);
+  console.log("[adicionarItemPDV] cfg:", cfg);
+  console.log("[adicionarItemPDV] tipo detectado:", tipo);
+
+  // ===== KG → modal de peso =====
   if (tipo === "kg") {
-    _mostrarModalPesoPDV(p, cfg.preco_kg || p.preco || 0);
+    const precoKg = cfg.preco_kg || p.preco || 0;
+    if (precoKg <= 0) {
+      alert("⚠️ Este produto não tem preço por Kg configurado.");
+      return;
+    }
+    _mostrarModalPesoPDV(p, precoKg);
     return;
   }
 
@@ -9608,18 +9588,18 @@ function adicionarItemPDV(p) {
     return;
   }
 
-  // Simples / Lanche / Bebida / Combo — adiciona direto
+  // Simples / Lanche / Bebida → adiciona direto
   const existe = carrinhoPDV.find((i) => i.id === p.id && !i.variacao);
-  const item = { 
-    ...p, 
-    qtd: 1, 
-    montagem: [], 
+  const item = {
+    ...p,
+    qtd: 1,
+    montagem: [],
     obs: "",
-    variacao_id: null  // ← ADICIONADO: campo para variação (não há)
+    variacao_id: null
   };
   if (existe) existe.qtd++;
   else carrinhoPDV.push(item);
-  
+
   atualizarCarrinhoPDV();
 
   if (_deveMostrarExtrasGlobais(p)) {
@@ -10415,22 +10395,38 @@ function _pdvModalConfirmar(cacheKey) {
     });
   }
 }
+
 let _toledoPort = null; // Web Serial: porta da balança Toledo
 
 function _mostrarModalPesoPDV(produto, precoKg) {
+  // Remove modal anterior se existir
   document.getElementById("pdv-kg-modal")?.remove();
 
   const overlay = document.createElement("div");
   overlay.id = "pdv-kg-modal";
-  overlay.style.cssText =
-    "position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px";
+  overlay.style.cssText = `
+    position:fixed;
+    inset:0;
+    background:rgba(0,0,0,0.6);
+    z-index:99999;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:16px;
+  `;
   overlay.onclick = (e) => {
     if (e.target === overlay) overlay.remove();
   };
 
   const modal = document.createElement("div");
-  modal.style.cssText =
-    "background:#fff;border-radius:20px;padding:24px 20px;max-width:380px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.35)";
+  modal.style.cssText = `
+    background:#fff;
+    border-radius:20px;
+    padding:24px 20px;
+    max-width:380px;
+    width:100%;
+    box-shadow:0 20px 60px rgba(0,0,0,0.35);
+  `;
 
   // Formata peso digitado: trata como gramas, exibe "300g" ou "1,230 kg"
   function formatarPeso(gramas) {
@@ -10627,11 +10623,6 @@ function _mostrarModalPesoPDV(produto, precoKg) {
             buffer += new TextDecoder().decode(value);
 
             // Protocolo Toledo Prix 3 Fit: envia linha ao pressionar PRINT
-            // Formatos possíveis:
-            //   "  0.300 kg\r\n"  →  300g
-            //   " 1.230 kg\r\n"   →  1230g
-            //   "P  0.300\r\n"    →  variação com prefixo P
-            //   "ST,GS,+  0.300kg\r\n"  → formato contínuo
             if (buffer.includes("\n") || buffer.includes("\r")) {
               const linhas = buffer.split(/[\r\n]+/);
               buffer = linhas.pop() || ""; // mantém fragmento incompleto
@@ -10640,7 +10631,7 @@ function _mostrarModalPesoPDV(produto, precoKg) {
                 const limpa = linha.trim();
                 if (!limpa) continue;
 
-                // Extrai número de kg: procura padrão X.XXX ou X,XXX seguido de "kg" (opcional)
+                // Extrai número de kg
                 const match =
                   limpa.match(/([\d]+[.,][\d]{1,3})\s*kg?/i) ||
                   limpa.match(/[STPG,\s]*([\d]+[.,][\d]{1,3})/);
@@ -11193,45 +11184,44 @@ function _pdvAtualizarTroco(totalFinal) {
 }
 
 function atualizarInfoPagPDV(total) {
-  const pag = document.getElementById("balcao-pag")?.value;
-  const infoBox = document.getElementById("balcao-pag-info");
-  const boxMultiPDV = document.getElementById("box-multi-pdv");
-  const selectPag = document.getElementById("balcao-pag");
+  const pag = document.getElementById('balcao-pag')?.value;
+  const infoBox = document.getElementById('balcao-pag-info');
+  const boxMultiPDV = document.getElementById('box-multi-pdv');
+  const selectPag = document.getElementById('balcao-pag');
   if (!infoBox) return;
 
-  // Mostra/oculta campo Recebido + Troco conforme forma de pagamento
   _pdvAtualizarTroco(total);
 
-  infoBox.style.display = "none";
-  if (boxMultiPDV) boxMultiPDV.style.display = "none";
-  if (selectPag) selectPag.style.display = "";
+  infoBox.style.display = 'none';
+  if (boxMultiPDV) boxMultiPDV.style.display = 'none';
+  if (selectPag) selectPag.style.display = '';
 
-  if (pag === "CartaoBR" && total > 0) {
-    infoBox.style.display = "block";
+  const taxa = _cotacaoCache || 1100;
+
+  if (pag === 'CartaoBR' && total > 0) {
+    infoBox.style.display = 'block';
     const _renderCarBR = () => {
-      const taxa =
-        _cartaoBRTipoPDV === "debito" ? _taxaDebitoPDV : _taxaCreditoPDV;
-      const brl =
-        _cotacaoPDV > 0
-          ? ((total / _cotacaoPDV) * (1 + taxa / 100)).toFixed(2)
-          : "---";
+      const tipo = _cartaoBRTipoPDV === 'debito' ? 'debito' : 'credito';
+      const taxaJuros = tipo === 'debito' ? _taxaDebitoPDV : _taxaCreditoPDV;
+      const brl = taxa > 0 ? ((total / taxa) * (1 + taxaJuros / 100)).toFixed(2) : '---';
       infoBox.innerHTML = `
         <div style="font-size:0.78rem;font-weight:700;margin-bottom:6px">💳🇧🇷 Cartão Brasileiro</div>
         <div style="display:flex;gap:6px;margin-bottom:8px">
           <button type="button" onclick="_setPDVBRTipo('debito')"
             style="flex:1;padding:6px 4px;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.75rem;
-                   border:2px solid ${_cartaoBRTipoPDV === "debito" ? "#1a7a2e" : "#ccc"};
-                   background:${_cartaoBRTipoPDV === "debito" ? "#eafaf1" : "#f8f9fa"};
-                   color:${_cartaoBRTipoPDV === "debito" ? "#1a7a2e" : "#555"}">
+                   border:2px solid ${_cartaoBRTipoPDV === 'debito' ? '#1a7a2e' : '#ccc'};
+                   background:${_cartaoBRTipoPDV === 'debito' ? '#eafaf1' : '#f8f9fa'};
+                   color:${_cartaoBRTipoPDV === 'debito' ? '#1a7a2e' : '#555'}">
             Débito<br><small>${_taxaDebitoPDV.toFixed(2)}%</small></button>
           <button type="button" onclick="_setPDVBRTipo('credito')"
             style="flex:1;padding:6px 4px;border-radius:6px;font-weight:700;cursor:pointer;font-size:0.75rem;
-                   border:2px solid ${_cartaoBRTipoPDV === "credito" ? "#1a7a2e" : "#ccc"};
-                   background:${_cartaoBRTipoPDV === "credito" ? "#eafaf1" : "#f8f9fa"};
-                   color:${_cartaoBRTipoPDV === "credito" ? "#1a7a2e" : "#555"}">
+                   border:2px solid ${_cartaoBRTipoPDV === 'credito' ? '#1a7a2e' : '#ccc'};
+                   background:${_cartaoBRTipoPDV === 'credito' ? '#eafaf1' : '#f8f9fa'};
+                   color:${_cartaoBRTipoPDV === 'credito' ? '#1a7a2e' : '#555'}">
             Crédito<br><small>${_taxaCreditoPDV.toFixed(2)}%</small></button>
         </div>
-        <div style="text-align:center;font-size:1rem;font-weight:900;color:#1a7a2e">R$ ${brl}</div>`;
+        <div style="text-align:center;font-size:1rem;font-weight:900;color:#1a7a2e">R$ ${brl}</div>
+      `;
     };
     window._setPDVBRTipo = (tipo) => {
       _cartaoBRTipoPDV = tipo;
@@ -11239,15 +11229,15 @@ function atualizarInfoPagPDV(total) {
     };
     window._renderCarBRPDV = _renderCarBR;
     _renderCarBR();
-  } else if (pag === "Pix" && total > 0) {
-    const valorReais = (total / _cotacaoPDV).toFixed(2);
-    infoBox.style.display = "block";
-    infoBox.innerHTML = `<i class="fas fa-qrcode"></i> <strong>Cobrar em Pix: R$ ${valorReais}</strong>`;
-  } else if (pag === "Multipagamento") {
-    if (selectPag) selectPag.style.display = "none";
+  } else if (pag === 'Pix' && total > 0) {
+    const brl = taxa > 0 ? (total / taxa).toFixed(2) : '---';
+    infoBox.style.display = 'block';
+    infoBox.innerHTML = `<i class="fas fa-qrcode"></i> <strong>Cobrar em Pix: R$ ${brl}</strong>`;
+  } else if (pag === 'Multipagamento') {
+    if (selectPag) selectPag.style.display = 'none';
     if (boxMultiPDV) {
-      boxMultiPDV.style.display = "block";
-      const partesEl = document.getElementById("multi-partes-pdv");
+      boxMultiPDV.style.display = 'block';
+      const partesEl = document.getElementById('multi-partes-pdv');
       if (partesEl && partesEl.children.length === 0) {
         adicionarPartePagamentoPDV();
         adicionarPartePagamentoPDV();

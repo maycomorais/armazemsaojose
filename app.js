@@ -20,6 +20,63 @@ let TAXA_DEBITO_BR = 0; // Taxa cartão débito (%)
 let TAXA_CREDITO_BR = 0; // Taxa cartão crédito (%)
 let CFG_LOGO_URL = ""; // Logo da loja (para notificações push)
 
+// ============================================
+// COTAÇÃO REAL - FONTE ÚNICA
+// ============================================
+let _cotacaoCache = null;
+let _cotacaoTimestamp = 0;
+const _COTACAO_TTL = 60000; // 60 segundos
+
+/**
+ * Obtém a cotação do Real (Gs/R$) da tabela configuracoes.
+ * - Usa cache com TTL para não bater no banco a cada clique.
+ * - Se já tiver carregado uma cotação na sessão, usa a mais recente.
+ */
+async function getCotacaoReal() {
+  const agora = Date.now();
+  if (_cotacaoCache !== null && (agora - _cotacaoTimestamp) < _COTACAO_TTL) {
+    return _cotacaoCache;
+  }
+
+  try {
+    const { data, error } = await supa
+      .from('configuracoes')
+      .select('cotacao_real')
+      .maybeSingle();
+
+    if (error) throw error;
+    const val = data?.cotacao_real ?? 1100;
+    _cotacaoCache = Number(val);
+    _cotacaoTimestamp = agora;
+    return _cotacaoCache;
+  } catch (e) {
+    console.warn('[getCotacaoReal] erro, usando fallback 1100:', e.message);
+    return 1100;
+  }
+}
+
+/**
+ * Converte um valor em Guaranis para Reais, formatado com 2 casas decimais.
+ * @param {number} gs - Valor em Guaranis
+ * @param {number} cotacao - (opcional) taxa de câmbio, se não informada busca automaticamente
+ * @returns {Promise<string>} - Ex: "R$ 12,34"
+ */
+async function formatarReais(gs, cotacao) {
+  const taxa = cotacao ?? await getCotacaoReal();
+  if (taxa <= 0) return 'R$ --';
+  const brl = gs / taxa;
+  return `R$ ${brl.toFixed(2).replace('.', ',')}`;
+}
+
+/**
+ * Retorna o valor numérico em Reais (para cálculos).
+ */
+async function valorEmReais(gs, cotacao) {
+  const taxa = cotacao ?? await getCotacaoReal();
+  if (taxa <= 0) return 0;
+  return gs / taxa;
+}
+
 async function carregarConfiguracoesLoja() {
   const { data, error } = await supa
     .from("configuracoes")
@@ -330,6 +387,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   await carregarConfiguracoesLoja();
   // 1. Carrega dados salvos (Nome, Tel, Último Pedido)
+  _cotacaoCache = Number(COTACAO_REAL) || 1100;
+
   carregarDadosLocal();
 
   // 2. Renderiza o Menu vindo do Banco de Dados
@@ -695,23 +754,16 @@ async function renderMenu() {
     return;
   }
 
-  // Diagnóstico removido — campo confirmado: 'destaque' no banco
-
   const subcats = subcatsDb || [];
 
-  // Monta mapa: categoria_slug -> lista de subcategorias
   const subcatPorCat = {};
   subcats.forEach((s) => {
     if (!subcatPorCat[s.categoria_slug]) subcatPorCat[s.categoria_slug] = [];
     subcatPorCat[s.categoria_slug].push(s);
   });
 
-  // Monta mapa: subcategoria_slug -> produtos
-  // Monta mapa: categoria_slug -> produtos SEM subcategoria
   const prodPorSubcat = {};
   const prodSemSubcat = {};
-
-  // Mapas globais para acesso por categoria (usados na paginação lazy)
   window._PROD_POR_SUBCAT = {};
   window._PROD_SEM_SUBCAT = {};
   window._SUBCATS = subcats;
@@ -722,7 +774,7 @@ async function renderMenu() {
   });
 
   produtos.forEach((p) => {
-    const cat = p.categoria_slug || ""; // garante string, nunca null
+    const cat = p.categoria_slug || "";
     const sub = p.subcategoria_slug || null;
     const item = {
       id: p.id,
@@ -751,12 +803,10 @@ async function renderMenu() {
       window._PROD_SEM_SUBCAT[cat].push(item);
     }
 
-    // Mantém MENU global para compatibilidade com outros lugares do código
     if (!MENU[cat]) MENU[cat] = [];
     MENU[cat].push(item);
   });
 
-  // Filtro de horário
   const agora = new Date();
   const minAgora = agora.getHours() * 60 + agora.getMinutes();
 
@@ -778,6 +828,15 @@ async function renderMenu() {
     return minAgora >= inicio && minAgora <= fim;
   }
 
+  // ========== FUNÇÃO _brl (USANDO _cotacaoCache) ==========
+  const _brl = (gs) => {
+    const taxa = _cotacaoCache || 1100;
+    if (taxa <= 0) return '';
+    const brl = gs / taxa;
+    return `<div class="prod-price-brl">≈ R$ ${brl.toFixed(2).replace('.', ',')}</div>`;
+  };
+  // ==========================================================
+
   function renderProdutoDiv(item) {
     const img = item.img || "";
     let cfg = item.montagem;
@@ -789,13 +848,8 @@ async function renderMenu() {
         ? cfg.__tipo
         : item.e_montavel ? "montavel" : "padrao";
 
-    // ── Pricing label ──────────────────────────────────────────
     let precoLabel = "";
     let discountBadge = "";
-    const _brl = (gs) =>
-      COTACAO_REAL > 0
-        ? `<div class="prod-price-brl">≈ R$ ${(gs / COTACAO_REAL).toFixed(2)}</div>`
-        : "";
 
     if (item.em_promocao && item.preco_original && item.preco_original > item.preco) {
       const pct = Math.round(100 - (item.preco / item.preco_original) * 100);
@@ -818,12 +872,10 @@ async function renderMenu() {
       precoLabel = `<div class="prod-price">Gs ${item.preco.toLocaleString("es-PY")}</div>${_brl(item.preco)}`;
     }
 
-    // ── Destaque badge — estilo referência (☆ verde) ──────────────
     const destaqueBadge = item.em_destaque
       ? `<span class="prod-badge-destaque">☆ Destaque</span>`
       : "";
 
-    // ── Image section ──────────────────────────────────────────
     const imgHtml = img
       ? `<img src="${img}" class="prod-img" loading="lazy" onerror="this.style.display='none'">`
       : `<div style="position:absolute;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#ccc;font-size:2.5rem;background:#f5f5f5;">🛒</div>`;
@@ -849,7 +901,6 @@ async function renderMenu() {
     return div;
   }
 
-  // ── Wrapper: create or reuse grid container ─────────────────
   function getOrCreateGrid(parent) {
     let grid = parent.querySelector(".products-grid:last-child");
     if (!grid) {
@@ -861,7 +912,6 @@ async function renderMenu() {
   }
 
   function appendToSection(section, item) {
-    // Find last grid or create one
     const children = section.childNodes;
     let lastGrid = null;
     for (let i = children.length - 1; i >= 0; i--) {
@@ -877,20 +927,16 @@ async function renderMenu() {
     lastGrid.appendChild(renderProdutoDiv(item));
   }
 
-  // Expõe renderCategoriaSectionContent para uso em filtrarProdutos (busca global)
   window._renderCatContent = renderCategoriaSectionContent;
 
-  // ── Constante de paginação ──────────────────────────────────────
   const PAGE_SIZE = 20;
 
-  // ── Helper: renderiza controle de paginação ──────────────────────
   function renderPaginacao(container, todosItens, offset, renderFn) {
-    // Remove paginação anterior se existir
     const oldPag = container.querySelector(".pagination-ctrl");
     if (oldPag) oldPag.remove();
 
     const total = todosItens.length;
-    if (total <= PAGE_SIZE) return; // não precisa de paginação
+    if (total <= PAGE_SIZE) return;
 
     const hasPrev = offset > 0;
     const hasNext = offset + PAGE_SIZE < total;
@@ -911,15 +957,12 @@ async function renderMenu() {
     };
     ctrl.querySelector("[data-dir='next']").onclick = () => {
       renderFn(container, todosItens, offset + PAGE_SIZE);
-      // Scroll suave ao topo da seção
       container.closest("section")?.scrollIntoView({ behavior: "smooth", block: "start" });
     };
     container.appendChild(ctrl);
   }
 
-  // ── Renderiza página de itens dentro de um grid ──────────────────
   function renderPaginaItens(parentSection, todosItens, offset) {
-    // Limpa conteúdo paginável (grids + paginação, mas mantém subtítulos fixos)
     parentSection.querySelectorAll(".products-grid, .pagination-ctrl").forEach(el => el.remove());
 
     const slice = todosItens.slice(offset, offset + PAGE_SIZE);
@@ -931,9 +974,7 @@ async function renderMenu() {
     renderPaginacao(parentSection, todosItens, offset, renderPaginaItens);
   }
 
-  // ── Renderiza seção de categoria com subcategorias e paginação ──────
   function renderCategoriaSectionContent(section, key) {
-    // Limpa conteúdo dinâmico anterior
     section.querySelectorAll(".products-grid, .pagination-ctrl, .subcat-title, .subcat-group").forEach(el => el.remove());
 
     const subcatsDessaCat = window._SUBCATPORCAT[key] || [];
@@ -947,7 +988,6 @@ async function renderMenu() {
       );
       renderPaginaItens(section, allItems, 0);
     } else {
-      // Produtos sem subcategoria
       const semSub = window._PROD_SEM_SUBCAT[key] || [];
       if (semSub.length > 0) {
         const wrapper = document.createElement("div");
@@ -956,7 +996,6 @@ async function renderMenu() {
         renderPaginaItens(wrapper, semSub, 0);
       }
 
-      // Grupos por subcategoria
       subcatsDessaCat.forEach((subcat) => {
         const itensSub = window._PROD_POR_SUBCAT[subcat.slug] || [];
         if (itensSub.length === 0) return;
@@ -974,7 +1013,6 @@ async function renderMenu() {
     }
   }
 
-  // ── Renderiza página de destaques ────────────────────────────────
   function renderPaginaDestaques(container, destaques, offset) {
     container.querySelectorAll(".products-grid, .pagination-ctrl").forEach(el => el.remove());
 
@@ -987,14 +1025,12 @@ async function renderMenu() {
     renderPaginacao(container, destaques, offset, renderPaginaDestaques);
   }
 
-  // ── 1. Seção DESTAQUES — busca direta dos itens já mapeados ──────────────
-  // Tenta primeiro pelos mapas globais; se vazio, faz query direta ao banco
+  // DESTAQUES
   let todosDestaques = Object.values(window._PROD_SEM_SUBCAT)
     .flat()
     .concat(Object.values(window._PROD_POR_SUBCAT).flat())
     .filter((item) => item.em_destaque === true);
 
-  // Fallback: se mapas não encontraram destaques, consulta o banco diretamente
   if (todosDestaques.length === 0) {
     try {
       const { data: destaquesDb } = await supa
@@ -1030,7 +1066,6 @@ async function renderMenu() {
   const temDestaques = todosDestaques.length > 0;
 
   if (temDestaques) {
-    // Pill de destaques
     const pillDest = document.createElement("button");
     pillDest.className = "cat-pill active";
     pillDest.id = "pill-destaques";
@@ -1038,7 +1073,6 @@ async function renderMenu() {
     pillDest.onclick = () => {
       document.querySelectorAll(".cat-pill").forEach((p) => p.classList.remove("active"));
       pillDest.classList.add("active");
-      // Mostra seção de destaques e oculta todas as categorias
       const sd = document.getElementById("sec-destaques");
       if (sd) sd.style.display = "";
       document.querySelectorAll("#menu-content > section[data-cat]").forEach((s) => s.style.display = "none");
@@ -1046,7 +1080,6 @@ async function renderMenu() {
     };
     nav.appendChild(pillDest);
 
-    // Seção destaques
     const secDest = document.createElement("section");
     secDest.id = "sec-destaques";
     secDest.innerHTML = `
@@ -1057,10 +1090,7 @@ async function renderMenu() {
     content.appendChild(secDest);
   }
 
-  // ── 2. Categorias — seções ocultas, reveladas ao clicar na pill ──
-  let primeiraCategoria = null; // usado como fallback se não houver destaques
-
-  // Slugs já criados pelas categorias do banco (evita duplicatas no fallback)
+  let primeiraCategoria = null;
   const keysJaCriadas = new Set();
 
   categsDb.forEach((cat) => {
@@ -1071,15 +1101,14 @@ async function renderMenu() {
 
     keysJaCriadas.add(key);
 
-    // Pill de navegação
     const pill = document.createElement("button");
     pill.className = "cat-pill";
     pill.dataset.catKey = key;
     const catIcon2 = cat.icone || cat.emoji || "";
     const nomeExibir = cat.nome_exibicao || cat.nome || key.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
-pill.innerHTML = catIcon2
-  ? `<span class="cat-pill-icon">${catIcon2}</span>${nomeExibir}`
-  : nomeExibir;
+    pill.innerHTML = catIcon2
+      ? `<span class="cat-pill-icon">${catIcon2}</span>${nomeExibir}`
+      : nomeExibir;
     pill.onclick = () => {
       document.querySelectorAll(".cat-pill").forEach((p) => p.classList.remove("active"));
       pill.classList.add("active");
@@ -1087,13 +1116,11 @@ pill.innerHTML = catIcon2
       const sec = document.getElementById(key);
       if (!sec) return;
 
-      // Lazy: renderiza o conteúdo da categoria apenas na 1ª vez
       if (!sec.dataset.loaded) {
         sec.dataset.loaded = "1";
         renderCategoriaSectionContent(sec, key);
       }
 
-      // Oculta seção de destaques e exibe só a categoria selecionada
       const sd = document.getElementById("sec-destaques");
       if (sd) sd.style.display = "none";
       document.querySelectorAll("#menu-content > section[data-cat]").forEach((s) => {
@@ -1104,11 +1131,10 @@ pill.innerHTML = catIcon2
     };
     nav.appendChild(pill);
 
-    // Seção da categoria (inicialmente oculta se houver destaques, visível se não houver)
     const section = document.createElement("section");
     section.id = key;
     section.dataset.cat = key;
-    section.style.display = "none"; // sempre oculta inicialmente
+    section.style.display = "none";
     const catIcon = cat.icone || cat.emoji || "";
     section.innerHTML = `
       <div class="section-title-row">
@@ -1117,12 +1143,9 @@ pill.innerHTML = catIcon2
 
     content.appendChild(section);
 
-    // Registra a primeira categoria para fallback
     if (!primeiraCategoria) primeiraCategoria = { pill, section, key };
   });
 
-  // ── Fallback: categorias presentes nos produtos mas ausentes/inativas na tabela categorias ──
-  // Garante que nenhuma categoria com produtos fique invisível por problema de cadastro
   const slugsNomesMap = {
     "natura": "Natura Cosméticos",
     "mercearia": "Mercearia",
@@ -1136,7 +1159,7 @@ pill.innerHTML = catIcon2
     "cacau-show": "🍫",
   };
   Object.keys(MENU).forEach((key) => {
-    if (keysJaCriadas.has(key)) return; // já criada pelo loop principal
+    if (keysJaCriadas.has(key)) return;
     if (!MENU[key] || MENU[key].length === 0) return;
 
     const nomeExibicao = slugsNomesMap[key] || key.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
@@ -1182,7 +1205,6 @@ pill.innerHTML = catIcon2
     if (!primeiraCategoria) primeiraCategoria = { pill, section, key };
   });
 
-  // Pill especial "Início" para voltar à vista de destaques (só se houver destaques)
   if (temDestaques) {
     const pillTodos = document.createElement("button");
     pillTodos.className = "cat-pill";
@@ -1196,17 +1218,14 @@ pill.innerHTML = catIcon2
       document.querySelectorAll("#menu-content > section[data-cat]").forEach((s) => s.style.display = "none");
       document.getElementById("sec-destaques")?.scrollIntoView({ behavior: "smooth", block: "start" });
     };
-    // Insere como primeiro pill (antes do pill de destaques)
     nav.insertBefore(pillTodos, nav.firstChild);
   } else if (primeiraCategoria) {
-    // Sem destaques: exibe a primeira categoria automaticamente com pill ativa
     primeiraCategoria.pill.classList.add("active");
     primeiraCategoria.section.style.display = "";
     primeiraCategoria.section.dataset.loaded = "1";
     renderCategoriaSectionContent(primeiraCategoria.section, primeiraCategoria.key);
   }
 
-  // ── Nav em duas linhas: distribui pills em grid 2 colunas ──────────────
   if (!document.getElementById("nav-two-row-style")) {
     const navStyle = document.createElement("style");
     navStyle.id = "nav-two-row-style";
@@ -2563,11 +2582,9 @@ function renderCarrinho() {
       if (m.borda) partes.push(`🧀 ${m.borda}`);
       detalhes = `<br><small style="color:#888">${partes.join(" · ")}</small>`;
     } else {
-      // Variação (ex: "Combo Grande") — aparece como badge separado, não duplica o nome
       if (item.variacao) {
         detalhes += `<br><small style="color:#FF441F;font-weight:600">▸ ${item.variacao}</small>`;
       }
-      // Preparo (ex: "Flambado", "Batata Frita")
       if (item.preparo) {
         detalhes += `<br><small style="color:#2980b9;font-weight:600">🍳 ${item.preparo}</small>`;
       }
@@ -2579,6 +2596,12 @@ function renderCarrinho() {
       ? `<br><small style="color:#666"><strong>Obs:</strong> ${item.obs}</small>`
       : "";
 
+    // ========== EXIBIÇÃO EM REAIS ==========
+    const taxa = _cotacaoCache || 1100;
+    const totalBrl = taxa > 0 ? (totalItem / taxa).toFixed(2).replace('.', ',') : '--';
+    const brlHtml = `<div style="font-size:0.7rem;color:#2d6a4f;font-weight:600;">≈ R$ ${totalBrl}</div>`;
+    // =======================================
+
     lista.innerHTML += `
       <div class="cart-item-row">
         ${item.img ? `<img src="${item.img}" class="cart-thumb">` : ""}
@@ -2587,6 +2610,7 @@ function renderCarrinho() {
           ${detalhes}
           ${obs}
           <div class="cart-item-price">Gs ${totalItem.toLocaleString("es-PY")}</div>
+          ${brlHtml}
         </div>
         <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
           <div class="qty-mini">
@@ -2665,7 +2689,6 @@ function adicionarUpsell(item) {
 function atualizarTotalCheckout() {
   const totalItens = carrinho.reduce((a, i) => a + i.preco * i.qtd, 0);
   let desconto = 0;
-  // -1 é sentinela 'a combinar'; null é sentinela 'fora do raio' — ambos tratados como 0
   let freteAplicado = (freteCalculado === -1 || freteCalculado === null) ? 0 : freteCalculado;
 
   if (cupomAplicado) {
@@ -2713,6 +2736,12 @@ function atualizarTotalCheckout() {
     }
   }
 
+  // ========== EXIBIÇÃO DO TOTAL EM REAIS ==========
+  const taxa = _cotacaoCache || 1100;
+  const totalBrl = taxa > 0 ? (totalGeral / taxa).toFixed(2).replace('.', ',') : '--';
+  const brlTotalHtml = `<div style="font-size:0.8rem;color:#2d6a4f;font-weight:600;text-align:right;">≈ R$ ${totalBrl}</div>`;
+  // ===============================================
+
   const totalEl = document.getElementById("total-final-checkout");
   if (totalEl) {
     totalEl.innerHTML = `
@@ -2722,6 +2751,7 @@ function atualizarTotalCheckout() {
           <span>Total:</span>
           <span>Gs ${totalGeral.toLocaleString("es-PY")}</span>
         </div>
+        ${brlTotalHtml}
       </div>
     `;
   }
@@ -2772,8 +2802,9 @@ function verificarPagamento() {
       else if (cupomAplicado.tipo === "frete") freteAplicado = 0;
     }
     const totalGs = totalItens - desconto + freteAplicado;
-    const totalBrl =
-      COTACAO_REAL > 0 ? (totalGs / COTACAO_REAL).toFixed(2) : "---";
+    // USANDO _cotacaoCache
+    const taxa = _cotacaoCache || 1100;
+    const totalBrl = taxa > 0 ? (totalGs / taxa).toFixed(2) : '---';
     infoDiv.innerHTML = `<strong>💳 Chave Pix:</strong><br>${CHAVE_PIX}<br><small>Titular: ${NOME_PIX}</small><br><strong style="color:#27ae60;font-size:1rem">💰 Valor: R$ ${totalBrl}</strong>`;
   } else if (pag === "Transferencia") {
     infoDiv.style.display = "block";
@@ -2784,20 +2815,17 @@ function verificarPagamento() {
   } else if (pag === "Multipagamento") {
     if (boxMulti) {
       boxMulti.style.display = "block";
-      // Esconde o select enquanto está no modo multi
       selectPag.style.display = "none";
-      // Inicializa com 2 formas se ainda não há nenhuma
       const partes = document.getElementById("multi-partes");
       if (partes && partes.children.length === 0) {
-        adicionarPartePagamento(); // 1ª forma
-        adicionarPartePagamento(); // 2ª forma
+        adicionarPartePagamento();
+        adicionarPartePagamento();
       }
       atualizarRestanteMulti();
     }
-    return; // Não chama atualizarRestanteMulti de novo
+    return;
   }
 
-  // Garante que o select volte a aparecer se não for Multipagamento
   if (selectPag) selectPag.style.display = "";
 }
 
@@ -2913,8 +2941,9 @@ function _atualizarPixInfo(id, metodo) {
   if (metodo === "Pix") {
     const valor =
       parseFloat(document.getElementById(`multi-valor-${id}`)?.value) || 0;
-    if (valor > 0 && COTACAO_REAL > 0) {
-      const brl = (valor / COTACAO_REAL).toFixed(2);
+    if (valor > 0) {
+      const taxa = _cotacaoCache || 1100;
+      const brl = taxa > 0 ? (valor / taxa).toFixed(2) : '---';
       pixInfo.style.display = "block";
       pixInfo.innerHTML = `💠 Pix: <strong>R$ ${brl}</strong> &nbsp;·&nbsp; Chave: ${CHAVE_PIX}`;
     } else {
@@ -3169,7 +3198,6 @@ async function enviarZap() {
     if (!nome || !tel || !pag)
       return alert("Preencha todos os campos obrigatórios!");
 
-    // Troco obrigatório quando pagamento em Efetivo
     if (pag === "Efetivo") {
       const trocoVal = document.getElementById("troco-valor").value.trim();
       if (!trocoVal || parseFloat(trocoVal.replace(/[^\d]/g, "")) <= 0) {
@@ -3180,9 +3208,7 @@ async function enviarZap() {
       document.getElementById("troco-valor").style.borderColor = "";
     }
 
-    // Promoções do dia: bloquear pagamento com Cartão
     const temPromoItem = carrinho.some((item) => {
-      // Verifica se algum item do carrinho pertence a categoria promocoes_do_dia
       for (const key in MENU) {
         if (key === "promocoes_do_dia") {
           const found = MENU[key].find(
@@ -3199,8 +3225,6 @@ async function enviarZap() {
       );
     }
 
-    // Pedido duplo: bloqueia se mesmo carrinho enviado no último 1h
-    // Verificado ANTES do insert para cobrir múltiplas abas simultâneas
     const _agora = Date.now();
     const _ultimoHash = localStorage.getItem("locanda_last_hash");
     const _ultimoTs = parseInt(localStorage.getItem("locanda_last_ts") || "0");
@@ -3213,11 +3237,9 @@ async function enviarZap() {
         "🚫 Seu pedido anterior foi computado, estamos bloqueando esta segunda tentativa.",
       );
     }
-    // Grava o hash ANTES do insert (protege múltiplas abas abertas ao mesmo tempo)
     localStorage.setItem("locanda_last_hash", _hashAtual);
     localStorage.setItem("locanda_last_ts", _agora.toString());
 
-    // Valida multipagamento
     if (pag === "Multipagamento") {
       const partes = _coletarMultiPagamento();
       if (partes.length < 2)
@@ -3256,7 +3278,6 @@ async function enviarZap() {
       return;
     }
 
-    // Bloqueio: cliente fora do raio de cobertura (freteCalculado === null)
     if (modoEntrega === "delivery" && freteCalculado === null) {
       alert("Sua localização está fora da área de entrega da loja. Não é possível finalizar o pedido.");
       return;
@@ -3264,14 +3285,11 @@ async function enviarZap() {
 
     const usouPlanoB = document.getElementById("check-sem-gps")?.checked;
     const ref = document.getElementById("cli-ref").value || "";
-    // Sanitiza telefone: remove +, -, espaços, parênteses e outros não-numéricos
-    // Caso o cliente cole um número do WhatsApp como "+595 984 692537"
     const telSanitizado = tel.replace(/[^\d]/g, "");
     const telCompleto = ddi + telSanitizado;
 
     const totalItens = carrinho.reduce((a, i) => a + i.preco * i.qtd, 0);
     let desconto = 0;
-    // -1 é sentinela 'a combinar' — salva como 0 no banco e no total
     let freteAplicado = freteCalculado === -1 ? 0 : freteCalculado;
     const freteACombinar = freteCalculado === -1;
 
@@ -3286,13 +3304,10 @@ async function enviarZap() {
     const totalGeral =
       totalItens - desconto + (modoEntrega === "delivery" ? freteAplicado : 0);
 
-    // 1. Salva no Banco PRIMEIRO para pegar o ID real
     let pedidoDbId = null;
     let numeroPedido = null;
 
     if (typeof supa !== "undefined") {
-      // Chave de idempotência: hash do carrinho + telefone + minuto atual
-      // Garante que mesmo se o cliente enviar duas vezes em < 2 min, só 1 pedido é criado
       const _iKey = btoa(encodeURIComponent(
         _hashAtual + "|" + telCompleto + "|" + Math.floor(Date.now() / 60000)
       )).slice(0, 64);
@@ -3316,15 +3331,15 @@ async function enviarZap() {
         itens: carrinho.map((i) => ({
           produto_id: i.produto_id || i.id,
           n: i.nome,
-          nome: i.nome, // alias legível para admin/motoboy
+          nome: i.nome,
           p: i.preco,
           q: i.qtd,
-          qtd: i.qtd, // alias legível
+          qtd: i.qtd,
           t: i.variacao || "",
           pr: i.preparo || "",
           m: i.montagem,
           o: i.obs,
-          categoria_slug: i.categoria_slug || i.cat || "", // para filtro de bebidas no motoboy
+          categoria_slug: i.categoria_slug || i.cat || "",
         })),
         endereco_entrega: ref,
         geo_lat: localCliente ? localCliente.lat.toString() : null,
@@ -3353,10 +3368,9 @@ async function enviarZap() {
 
       if (pedidoSalvo) {
         pedidoDbId = pedidoSalvo.id;
-        numeroPedido = pedidoSalvo.id; // USA O ID DO BANCO
+        numeroPedido = pedidoSalvo.id;
         console.log("✅ Pedido salvo com ID:", pedidoDbId);
 
-        // Incrementa contador de usos do cupom
         if (cupomAplicado?.id) {
           const novosUsos = (cupomAplicado.usos_realizados || 0) + 1;
           await supa
@@ -3367,14 +3381,11 @@ async function enviarZap() {
       }
     }
 
-    // Salva localmente para "Repetir Pedido"
     localStorage.setItem("locanda_last", JSON.stringify(carrinho));
     localStorage.setItem("locanda_user", JSON.stringify({ nome, tel }));
 
-    // 2. Usa o número real do pedido na mensagem
     const idDisplay = numeroPedido || "TEMP";
 
-    // 3. Monta Mensagem WhatsApp
     const _nomeLojaMsg = (NOME_RESTAURANTE_APP || "").trim() || "LOJA";
     let msg = `🛒 PEDIDO #${idDisplay} - ${_nomeLojaMsg.toUpperCase()}\n`;
     msg += `--------------------------\n`;
@@ -3385,7 +3396,6 @@ async function enviarZap() {
     if (modoEntrega === "delivery") {
       if (localCliente) {
         msg += `📍 Maps: https://maps.google.com/?q=${localCliente.lat},${localCliente.lng}\n`;
-        // Verifica se frete é 'a combinar' (sentinela -1)
         if (freteACombinar) {
           msg += `🛵 Delivery: 🤝 A COMBINAR (confirmar pelo WhatsApp)\n`;
         } else {
@@ -3435,7 +3445,6 @@ async function enviarZap() {
     }
     msg += `--------------------------\n`;
 
-    // Pagamento e Troco
     if (pag === "Efetivo") {
       const trocoVal = document.getElementById("troco-valor").value;
       msg += `💰 Pagamento: Efetivo (Troco p/: ${trocoVal})\n`;
@@ -3452,11 +3461,10 @@ async function enviarZap() {
       msg += `💰 Pagamento: ${pag}\n`;
     }
 
-    // Avisos de Pix/Alias (Bilíngue)
     if (pag === "Pix" || pag === "Transferencia") {
       if (pag === "Pix") {
-        const totalBrl =
-          COTACAO_REAL > 0 ? (totalGeral / COTACAO_REAL).toFixed(2) : "---";
+        const taxa = _cotacaoCache || 1100;
+        const totalBrl = taxa > 0 ? (totalGeral / taxa).toFixed(2) : '---';
         msg += `\n💠 Chave Pix: ${CHAVE_PIX}\n`;
         msg += `💰 Valor em Reais: R$ ${totalBrl}\n`;
       }
@@ -3464,13 +3472,12 @@ async function enviarZap() {
       msg += `\n⚠️ *Envie o comprovante após o pagamento!*\n`;
     }
 
-    // Para multipagamento: avisar sobre Pix ou Transferencia se incluídos
     if (pag === "Multipagamento") {
       const partes = _coletarMultiPagamento();
       partes.forEach((p, idx) => {
         if (p.metodo === "Pix") {
-          const valBrl =
-            COTACAO_REAL > 0 ? (p.valor / COTACAO_REAL).toFixed(2) : "---";
+          const taxa = _cotacaoCache || 1100;
+          const valBrl = taxa > 0 ? (p.valor / taxa).toFixed(2) : '---';
           msg += `\n💠 Pix (forma ${idx + 1}): Chave ${CHAVE_PIX} — R$ ${valBrl}\n`;
         }
         if (p.metodo === "Transferencia") {
@@ -3484,14 +3491,10 @@ async function enviarZap() {
         msg += `\n⚠️ *Envie o(s) comprovante(s) após o pagamento!*\n`;
     }
 
-    // Factura
     if (document.getElementById("check-factura").checked) {
       msg += `\n📄 RUC: ${document.getElementById("cli-ruc").value}\nRazão: ${document.getElementById("cli-zao").value}\n`;
     }
 
-    // Hash anti-duplicata já foi salvo acima antes do insert
-
-    // Verifica se o pagamento exige envio de comprovante pelo WhatsApp
     const _precisaZap = (() => {
       if (pag === "Pix" || pag === "Transferencia") return true;
       if (pag === "Multipagamento") {
@@ -3504,12 +3507,9 @@ async function enviarZap() {
     })();
 
     if (_precisaZap) {
-      // Pagamento digital: exige envio de comprovante → abre WhatsApp obrigatoriamente
       await _mostrarModalEnvio(msg, numeroPedido);
     } else {
-      // Pagamento em dinheiro/cartão/QR: pedido já está registrado, só confirma
       _mostrarConfirmacaoPedido(numeroPedido);
-      // Limpa carrinho
       carrinho = [];
       cupomAplicado = null;
       MODO_AGENDAMENTO = false;
