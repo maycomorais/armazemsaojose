@@ -30,13 +30,13 @@ async function getCotacaoReal() {
       .maybeSingle();
 
     if (error) throw error;
-    const val = data?.cotacao_real ?? 1100;
+    const val = data?.cotacao_real ?? 1150;
     _cotacaoCache = Number(val);
     _cotacaoTimestamp = agora;
     return _cotacaoCache;
   } catch (e) {
-    console.warn('[getCotacaoReal] erro, usando fallback 1100:', e.message);
-    return 1100;
+    console.warn('[getCotacaoReal] erro, usando fallback 1150:', e.message);
+    return 1150;
   }
 }
 
@@ -5103,6 +5103,7 @@ async function salvarProduto() {
     const fileInput = document.getElementById("prod-img-file");
     let urlFinal = document.getElementById("prod-img").value;
 
+    // ── Upload de imagem ──
     if (fileInput.files.length > 0) {
       btn.innerText = "📤 Enviando imagem...";
       try {
@@ -5124,6 +5125,18 @@ async function salvarProduto() {
     const cat = document.getElementById("prod-cat").value;
     if (!cat) { alert("⚠️ Selecione uma categoria."); return; }
 
+    // ── Função auxiliar: converte string com separador de milhar para número ──
+    const parseGs = (valor) => {
+      if (!valor) return 0;
+      // Remove tudo que não for dígito (inclui pontos e vírgulas)
+      const limpo = String(valor).replace(/[^\d]/g, '');
+      return parseInt(limpo, 10) || 0;
+    };
+
+    // ── Lê preço base ──
+    const precoEl = document.getElementById("prod-preco");
+    let precoBase = parseGs(precoEl?.value || 0);
+
     // ── VENDA POR KG ──
     const vendaKgAtiva = document.getElementById("prod-venda-kg")?.checked || false;
     let precoKg = 0;
@@ -5131,7 +5144,7 @@ async function salvarProduto() {
 
     if (vendaKgAtiva) {
       const pkEl = document.getElementById("prod-preco-kg");
-      precoKg = parseFloat(pkEl?.value) || 0;
+      precoKg = parseGs(pkEl?.value || 0);
       if (precoKg <= 0) {
         alert("⚠️ Informe o preço por Kg para ativar a venda por peso.");
         return;
@@ -5141,19 +5154,41 @@ async function salvarProduto() {
         preco_kg: precoKg
       };
       // O preço base do produto será o preço por Kg (usado como referência)
-      document.getElementById("prod-preco").value = precoKg;
+      precoBase = precoKg;
     }
 
-    // ── Log para debug ──
     console.log("[salvarProduto] vendaKgAtiva:", vendaKgAtiva);
     console.log("[salvarProduto] precoKg:", precoKg);
     console.log("[salvarProduto] montagemConfig:", montagemConfig);
+
+    // ── Promoção ──
+    let precoOriginal = null;
+    let emPromocao = false;
+    if (document.getElementById("prod-promo-ativo")?.checked) {
+      const tipo = document.getElementById("prod-promo-tipo")?.value;
+      const valor = parseGs(document.getElementById("prod-promo-valor")?.value || 0);
+      if (valor > 0) {
+        emPromocao = true;
+        precoOriginal = precoBase;
+        if (tipo === "percent") {
+          if (valor >= 100) { alert("⚠️ Desconto percentual inválido."); return; }
+          precoBase = Math.round(precoBase * (1 - valor / 100));
+        } else {
+          precoBase = Math.max(0, precoBase - valor);
+        }
+      }
+    }
 
     // ── Monta objeto dados ──
     const dados = {
       nome: nome,
       descricao: document.getElementById("prod-desc").value,
-      preco: parseFloat(document.getElementById("prod-preco").value) || 0,
+      preco: precoBase,
+      promo_ativo: document.getElementById("prod-promo-ativo")?.checked || false,
+      promo_tipo: document.getElementById("prod-promo-tipo")?.value || null,
+      promo_valor: parseGs(document.getElementById("prod-promo-valor")?.value || 0) || null,
+      em_promocao: emPromocao,
+      preco_original: precoOriginal,
       categoria_slug: cat,
       subcategoria_slug: document.getElementById("prod-subcat")?.value || null,
       imagem_url: urlFinal,
@@ -5175,9 +5210,7 @@ async function salvarProduto() {
       preco_compra: (() => {
         const el = document.getElementById("prod-preco-compra");
         if (!el) return null;
-        const raw = el.dataset.valorNumerico || (el.value || "").replace(/\D/g, "") || "0";
-        const v = parseInt(raw, 10);
-        return v > 0 ? v : null;
+        return parseGs(el.value || 0) || null;
       })(),
       perecivel: document.getElementById("prod-perecivel")?.checked || false,
       data_validade: document.getElementById("prod-perecivel")?.checked && document.getElementById("prod-data-validade")?.value
@@ -5204,16 +5237,15 @@ async function salvarProduto() {
       prodIdSalvo = novoProd.id;
     }
 
-    // ── Após salvar, busca o produto de volta para confirmar ──
+    // ── Confirmação ──
     const { data: confirmado } = await supa
       .from("produtos")
-      .select("montagem_config")
+      .select("montagem_config, preco")
       .eq("id", prodIdSalvo)
       .single();
+    console.log("[salvarProduto] CONFIRMADO no banco:", confirmado);
 
-    console.log("[salvarProduto] CONFIRMADO no banco:", confirmado?.montagem_config);
-
-    // ── Salva variações se existir ──
+    // ── Salva variações ──
     if (document.getElementById("secao-variacoes-estoque")) {
       await veSalvarVariacoes(prodIdSalvo);
     }
@@ -7856,7 +7888,6 @@ async function carregarConfiguracoes() {
   // ========== ATUALIZA CACHE DA COTAÇÃO ==========
   if (data.cotacao_real) {
     _cotacaoCache = Number(data.cotacao_real);
-    COTACAO_REAL = _cotacaoCache; // mantém compatibilidade
   }
   // ================================================
 
@@ -7962,7 +7993,7 @@ async function salvarConfiguracoes() {
   };
   const dados = {
     loja_aberta: g("cfg-aberta") === "true",
-    cotacao_real: parseFloat(g("cfg-cotacao")) || 1100,
+    cotacao_real: parseFloat(g("cfg-cotacao")) || 1150,
     banner_produto_id: parseInt(g("cfg-banner-id")) || null,
     banner_imagem: g("cfg-banner-img") || "",
     banner_desconto_tipo: g("cfg-banner-desc-tipo") || null,
@@ -8972,15 +9003,96 @@ async function wlSalvarNovaSenha() {
 // =========================================
 let carrinhoPDV = [];
 let produtosCachePDV = [];
-// Cotação carregada das configurações (fallback 1100)
-let _cotacaoPDV = 1100;
+// Cotação carregada das configurações (fallback 1150)
+let _cotacaoPDV = 1150;
 let _taxaDebitoPDV = 1.99;
 let _taxaCreditoPDV = 4.98;
 let _cartaoBRTipoPDV = "debito";
 
+/**
+ * Mini-painel de caixa na aba PDV.
+ * Visível para todos os perfis (funcionario, gerente, dono, etc).
+ * Permite abrir o caixa sem precisar acessar a aba financeiro.
+ */
+async function pdvCarregarPainelCaixa() {
+  const container = document.getElementById("pdv-painel-caixa");
+  if (!container) return;
+
+  // Reutiliza _carregarSessaoCaixa se financeiro não foi aberto ainda
+  const ehGestor = ["dono", "gerente", "adminMaster"].includes(perfilUsuario);
+  const emailAtual = document.getElementById("user-email")?.innerText || "";
+
+  let q = supa
+    .from("sessoes_caixa")
+    .select("*")
+    .is("fechado_em", null)
+    .order("aberto_em", { ascending: false })
+    .limit(1);
+  if (!ehGestor) q = q.eq("usuario_email", emailAtual);
+
+  const { data } = await q;
+  const sessao = data?.[0] || null;
+
+  // Sincroniza com _sessaoCaixaAtiva para que salvarMovimentacaoCaixa funcione
+  _sessaoCaixaAtiva = sessao;
+
+  if (!sessao) {
+    container.innerHTML = `
+      <div style="background:#fff3cd;border:1.5px solid #f0a500;border-radius:12px;
+        padding:14px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <div style="flex:1;min-width:200px">
+          <div style="font-weight:700;color:#7a5100;font-size:0.92rem">⚠️ Caixa não aberto</div>
+          <div style="font-size:0.8rem;color:#9a6400;margin-top:2px">
+            Abra o caixa para as vendas serem contabilizadas nesta sessão.
+          </div>
+        </div>
+        <button onclick="abrirModalCaixa('abertura')"
+          style="background:#27ae60;color:#fff;border:none;border-radius:9px;
+            padding:10px 20px;font-weight:700;cursor:pointer;font-size:0.88rem;
+            white-space:nowrap;box-shadow:0 2px 8px rgba(39,174,96,.3)">
+          <i class="fas fa-door-open"></i> Abrir Caixa
+        </button>
+      </div>`;
+  } else {
+    const dAbr = new Date(sessao.aberto_em).toLocaleString("pt-BR", {
+      day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"
+    });
+    const podeFechar = ehGestor;
+    container.innerHTML = `
+      <div style="background:#eafaf1;border:1.5px solid #27ae60;border-radius:12px;
+        padding:12px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <div style="flex:1;min-width:200px">
+          <div style="font-weight:700;color:#1a6b3a;font-size:0.92rem">
+            🟢 Caixa aberto desde ${dAbr}
+          </div>
+          <div style="font-size:0.8rem;color:#2e7d52;margin-top:2px">
+            Operador: ${sessao.usuario_nome || sessao.usuario_email}
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button onclick="abrirModalCaixa('suprimento')"
+            style="background:#2980b9;color:#fff;border:none;border-radius:8px;
+              padding:8px 14px;font-weight:600;cursor:pointer;font-size:0.82rem">
+            <i class="fas fa-plus-circle"></i> Suprimento
+          </button>
+          <button onclick="abrirModalCaixa('sangria')"
+            style="background:#e67e22;color:#fff;border:none;border-radius:8px;
+              padding:8px 14px;font-weight:600;cursor:pointer;font-size:0.82rem">
+            <i class="fas fa-hand-holding-usd"></i> Sangria
+          </button>
+          ${podeFechar ? `
+          <button onclick="fecharCaixaResumo()"
+            style="background:#2c3e50;color:#fff;border:none;border-radius:8px;
+              padding:8px 14px;font-weight:600;cursor:pointer;font-size:0.82rem">
+            <i class="fas fa-calculator"></i> Fechar Dia
+          </button>` : ""}
+        </div>
+      </div>`;
+  }
+}
+
 async function carregarPDV() {
-  // PDV carrega TODOS os produtos ativos (inclui pausado=null e pausado=false)
-  // .neq("pausado", true) exclui NULLs no PostgREST — usar .or() para incluir
+  // PDV carrega TODOS os produtos ativos
   const { data } = await supa
     .from("produtos")
     .select("*")
@@ -8997,16 +9109,30 @@ async function carregarPDV() {
     .order("ordem");
   produtosCatsPDV = cats || [];
 
-  // Carrega cotação atual das configurações
+  // ========== CARREGA COTAÇÃO E FORÇA O CACHE ==========
   const { data: cfg } = await supa
     .from("configuracoes")
     .select("cotacao_real, taxa_debito, taxa_credito")
     .maybeSingle();
+
+  // ATUALIZA O CACHE GLOBAL COM O VALOR DO BANCO
   if (cfg?.cotacao_real) {
     _cotacaoCache = Number(cfg.cotacao_real);
+    // Também atualiza a variável antiga para compatibilidade
+    _cotacaoPDV = Number(cfg.cotacao_real);
+  } else {
+    // Fallback: mantém o que já estava (ou 1100)
+    _cotacaoCache = _cotacaoCache || 1150;
+    _cotacaoPDV = _cotacaoPDV || 1150;
   }
+
+  // LOG DE DIAGNÓSTICO (aparece no console)
+  console.log("[PDV] Cotação carregada:", _cotacaoCache);
+  console.log("[PDV] Cotação (fallback _cotacaoPDV):", _cotacaoPDV);
+
   if (cfg?.taxa_debito != null) _taxaDebitoPDV = Number(cfg.taxa_debito);
   if (cfg?.taxa_credito != null) _taxaCreditoPDV = Number(cfg.taxa_credito);
+
   // Aplica visibilidade das formas de pagamento no PDV
   const { data: featCfg } = await supa
     .from("configuracoes")
@@ -9014,15 +9140,16 @@ async function carregarPDV() {
     .maybeSingle();
   _aplicarFormasPagamentoPDV(featCfg?.features_ativas);
 
-  // ── Sincroniza painel de abertura de caixa no PDV ────────────────
-  await _carregarSessaoCaixa();
-  _pdvAtualizarPainelCaixa();
+  // ========== FIM DA CORREÇÃO ==========
 
   renderizarGridPDV();
-  pdvCarregarClientes(); // Garante que o datalist esteja populado
-  setTimeout(() => pdvAtualizarClienteNota(), 100); // Força a atualização do seletor
   atualizarBarraMesasAtivas();
   pdvIniciarTabs();
+  if (typeof pdvCarregarPainelCaixa === "function") {
+    await pdvCarregarPainelCaixa();
+  } else {
+    console.warn("[PDV] pdvCarregarPainelCaixa não definida — ignorando.");
+  }
 }
 
 /**
@@ -11190,13 +11317,16 @@ function atualizarInfoPagPDV(total) {
   const selectPag = document.getElementById('balcao-pag');
   if (!infoBox) return;
 
+  // Mostra/oculta campo Recebido + Troco conforme forma de pagamento
   _pdvAtualizarTroco(total);
 
   infoBox.style.display = 'none';
   if (boxMultiPDV) boxMultiPDV.style.display = 'none';
   if (selectPag) selectPag.style.display = '';
 
-  const taxa = _cotacaoCache || 1100;
+  // ===== USAR COTAÇÃO GLOBAL =====
+  // _cotacaoCache é atualizada em carregarConfiguracoes() e carregarPDV()
+  const taxa = _cotacaoCache || 1150;
 
   if (pag === 'CartaoBR' && total > 0) {
     infoBox.style.display = 'block';
@@ -13293,6 +13423,7 @@ async function crmSalvarConfig() {
     _crmCashbackPct = pct;
     _crmCashbackVal = val;
     alert("✅ Configurações de cashback salvas!");
+    _cotacaoCache = Number(COTACAO_REAL) || 1150;
   } catch (e) {
     alert("Erro: " + e.message);
   }
@@ -15708,7 +15839,7 @@ async function _obSalvar() {
 
     // Numérico
     if (payload.cotacao_real)
-      payload.cotacao_real = parseFloat(payload.cotacao_real) || 1100;
+      payload.cotacao_real = parseFloat(payload.cotacao_real) || 1150;
     if (payload.coord_lat)
       payload.coord_lat = parseFloat(payload.coord_lat) || 0;
     if (payload.coord_lng)

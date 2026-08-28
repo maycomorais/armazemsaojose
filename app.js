@@ -45,8 +45,8 @@ async function getCotacaoReal() {
       .maybeSingle();
 
     if (error) throw error;
-    const val = data?.cotacao_real ?? 1100;
-    _cotacaoCache = Number(val);
+    const val = data?.cotacao_real ?? 1150;
+    _cotacaoCache = Number(COTACAO_REAL) || 1150;
     _cotacaoTimestamp = agora;
     return _cotacaoCache;
   } catch (e) {
@@ -387,7 +387,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   await carregarConfiguracoesLoja();
   // 1. Carrega dados salvos (Nome, Tel, Último Pedido)
-  _cotacaoCache = Number(COTACAO_REAL) || 1100;
+  _cotacaoCache = Number(COTACAO_REAL) || 1150;
 
   carregarDadosLocal();
 
