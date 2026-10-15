@@ -6,6 +6,15 @@ const translations = {
         closed: "Cerrado",
         rating: "calificación",
         delivery_time: "30-45 min",
+
+        'track-instrucao': 'Ingrese el número de su pedido para seguirlo:',
+        'track-motoboy': 'Motoboy:',
+        'track-contato': 'Contacto:',
+        'btn-aplicar-cupom': 'Aplicar',
+        'pwa-instalar-titulo': '📲 Instalar o App',
+        'footer-dev': '💼 Desarrollado por LinkPy Software Factory',
+        'footer-site': '🌐 website: linkPY.online',
+        'footer-tag': 'Soluciones tecnológicas para restaurantes y servicios de entrega.',
         
         // Banner
         promotion_of_day: "Promoción del Día",
@@ -134,6 +143,15 @@ const translations = {
         closed: "Fechado",
         rating: "avaliação",
         delivery_time: "30-45 min",
+
+        'track-instrucao': 'Digite o número do pedido para acompanhar:',
+        'track-motoboy': 'Motoboy:',
+        'track-contato': 'Contato:',
+        'btn-aplicar-cupom': 'Aplicar',
+        'pwa-instalar-titulo': '📲 Instalar o App',
+        'footer-dev': '💼 Desenvolvido por LinkPy Software Factory',
+        'footer-site': '🌐 website: linkPY.online',
+        'footer-tag': 'Soluções em tecnologia para restaurantes e delivery.',
         
         // Banner
         promotion_of_day: "Promoção do Dia",
@@ -282,6 +300,15 @@ const translations = {
         delivery_fee: "Delivery",
         discount: "Discount",
         total: "Total",
+
+        'track-instrucao': 'Enter your order number to track it:',
+        'track-motoboy': 'Driver:',
+        'track-contato': 'Contact:',
+        'btn-aplicar-cupom': 'Apply',
+        'pwa-instalar-titulo': '📲 Install the App',
+        'footer-dev': '💼 Developed by LinkPy Software Factory',
+        'footer-site': '🌐 website: linkPY.online',
+        'footer-tag': 'Technology solutions for restaurants and delivery services.',
         
         // Cupom
         discount_coupon: "Discount Coupon",
@@ -449,6 +476,15 @@ const translations = {
         delivered: "Geliefert",
         confirm_delivery: "Lieferung bestätigen",
         delivery_confirmed: "Lieferung bestätigt!",
+
+        'track-instrucao': 'Geben Sie Ihre Bestellnummer ein, um sie zu verfolgen:',
+        'track-motoboy': 'Fahrer:',
+        'track-contato': 'Kontakt:',
+        'btn-aplicar-cupom': 'Anwenden',
+        'pwa-instalar-titulo': '📲 App installieren',
+        'footer-dev': '💼 Entwickelt von LinkPy Software Factory',
+        'footer-site': '🌐 website: linkPY.online',
+        'footer-tag': 'Technologielösungen für Restaurants und Lieferdienste.',
         
         // Modal Produto
         observations: "Anmerkungen?",

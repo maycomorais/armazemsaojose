@@ -114,6 +114,9 @@
     <div class="totais">
       <div>Subtotal: <span id="subtotal">Gs 0</span></div>
       <div id="row-desconto" style="display:none;color:#e74c3c">Desconto: -<span id="desconto">Gs 0</span></div>
+      <div id="row-economia" style="display:none;color:#16a34a;font-weight:700">
+        ✓ Economia (atacado): <span id="economia">Gs 0</span>
+      </div>
       <div id="row-frete" style="display:none">Frete: <span id="frete">Gs 0</span></div>
       <div class="total-final">TOTAL: <span id="total-geral">Gs 0</span></div>
     </div>
@@ -220,6 +223,15 @@
             });
           }
 
+          // Faixa varejo/atacado
+          var tier = item._tier;
+          var faixaAplicada = item._faixaAplicada;
+          if (tier != null && tier > 0 && faixaAplicada) {
+            var tierLabel = tier === 1 ? "✓ Preço com desconto" : "🏭 Preço atacado";
+            var tierColor = tier === 1 ? "#16a34a" : "#dc2626";
+            det += '<span style="font-size:11px;font-weight:700;color:' + tierColor + ';display:block;line-height:1.3">' + tierLabel + ' · Gs ' + Math.round(faixaAplicada).toLocaleString('es-PY') + '/un</span>';
+          }
+
           // Obs
           if (obs)
             det += '<span class="det-obs">⚠ ' + obs + '</span>';
@@ -246,6 +258,19 @@
         if (desconto > 0) {
           document.getElementById('row-desconto').style.display = '';
           document.getElementById('desconto').textContent = 'Gs ' + desconto.toLocaleString('es-PY');
+        }
+        // ── Economia total (itens com faixa) ─────────────────────
+        var economiaTotal = 0;
+        (itens || []).forEach(function(item) {
+          if (item._tier > 0 && item._faixaAplicada && item.precoUnitarioOriginal) {
+            economiaTotal += (item.precoUnitarioOriginal - item._faixaAplicada) * (item.q || 1);
+          }
+        });
+        if (economiaTotal > 0) {
+          var _reEl = document.getElementById('row-economia');
+          var _ecoEl = document.getElementById('economia');
+          if (_reEl) _reEl.style.display = '';
+          if (_ecoEl) _ecoEl.textContent = 'Gs ' + Math.round(economiaTotal).toLocaleString('es-PY');
         }
         if (frete > 0) {
           document.getElementById('row-frete').style.display = '';

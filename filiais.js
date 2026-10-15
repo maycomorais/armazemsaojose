@@ -32,13 +32,13 @@ async function carregarPerfilAtual() {
     if (!session) return;
 
     const { data } = await supa
-      .from('perfis')
-      .select('role, filial_id, nome')
-      .eq('usuario_id', session.user.id)
+      .from('perfis_acesso')
+      .select('cargo, role, filial_id, nome_display, nome')
+      .eq('id', session.user.id)   // id é o próprio UUID do user, não usuario_id
       .maybeSingle();
 
-    _perfil_atual = data;
-  } catch (e) { console.warn('carregarPerfilAtual:', e.message); }
+      _perfil_atual = data;
+    } catch (e) { console.warn('carregarPerfilAtual:', e.message); }
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -255,7 +255,7 @@ async function excluirFilial(id, nome) {
 async function carregarUsuariosAdmin() {
   try {
     const { data, error } = await supa
-      .from('perfis')
+      .from('perfis_acesso')
       .select('id, usuario_id, email, nome, role, filial_id, ativo')
       .order('nome');
 
@@ -350,7 +350,7 @@ async function salvarUsuarioAdmin() {
   }
 
   const { error } = await supa
-    .from('perfis')
+    .from('perfis_acesso')
     .update({ nome, role, filial_id: filialId, ativo })
     .eq('id', perfilId);
 

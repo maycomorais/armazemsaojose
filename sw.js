@@ -4,7 +4,7 @@
 //    1. Incremente CACHE_NAME (ex: v7, v8…)
 //    2. O SW antigo detecta a diferença no activate e apaga os caches velhos.
 // ─────────────────────────────────────────────────────────────
-const CACHE_NAME = "saojose-v1.1"; // ← bump aqui a cada deploy
+const CACHE_NAME = "saojose-v1.3"; // ← bump aqui a cada deploy
 
 const BLOCKED_ORIGINS = [
   "instagram.",

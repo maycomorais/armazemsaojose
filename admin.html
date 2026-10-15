@@ -122,6 +122,73 @@
     margin-bottom: 6px;
   }
   .lang-btn.active { opacity: 1 !important; background: rgba(255,255,255,0.35) !important; }
+  .pdv-qty-mult-btn.active { background:#16a34a !important; color:#fff !important; }
+    /* ═══════════════════════════════════════════════════════════════
+   BARRA DE VENCIMENTO DE ASSINATURA — topbar full-width (desktop)
+   Transforma o .main-content em coluna flex: barra no topo,
+   conteúdo da aba embaixo com scroll próprio.
+   Só afeta desktop (mobile tem layout próprio em < 769px).
+   ═══════════════════════════════════════════════════════════════ */
+@media (min-width: 769px) {
+
+  /* .main-content vira coluna: barra + aba */
+  .main-content {
+    display: flex !important;
+    flex-direction: column !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    height: 100vh !important;
+    align-items: stretch !important;
+  }
+
+  /* Barra de aviso vira topbar: largura total, sem encolher, estática */
+    .main-content > #subscription-alert-bar {
+    flex: 0 0 auto !important;
+    align-self: stretch !important;   /* ← força esticar no eixo cruzado */
+    min-width: 100% !important;       /* ← segunda linha de defesa */
+    width: 100% !important;
+    max-width: 100% !important;
+    position: static !important;
+    top: auto !important;
+    z-index: 900 !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    box-sizing: border-box !important;
+    padding: 12px 24px !important;
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 10px !important;
+  }
+
+
+  /* min-width: 0 é ESSENCIAL — sem isso a barra se recusa a encolher
+     e empurra o resto do layout para a direita como se fosse coluna. */
+  .main-content > #subscription-alert-bar .sub-bar-msg {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+  }
+  
+
+  /* Cada aba é o container de scroll (não o .main-content) */
+  .main-content > .tab-content {
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    padding: 20px !important;
+    padding-bottom: 80px !important;
+    display: none;
+  }
+
+  .main-content > .tab-content.active {
+    display: block !important;
+  }
+}
+  
   </style>
   <body>
     <div id="auth-overlay" style="position:fixed;inset:0;background:#111;z-index:99999;display:flex;align-items:center;justify-content:center;font-family:Arial,sans-serif;font-size:15px;color:#aaa">
@@ -314,6 +381,33 @@
           </div>
         </div>
 
+        <!-- ── Alertas de Estoque e Validade ──────────────────────── -->
+<div id="dash-alertas-wrap" style="display:none;flex-direction:column;gap:10px;margin-bottom:20px">
+
+  <div id="dash-alerta-estoque" class="dash-alerta dash-alerta-vermelho" style="display:none">
+    <div class="dash-alerta-icon"><i class="fas fa-box-open"></i></div>
+    <div class="dash-alerta-body">
+      <div class="dash-alerta-title" id="dash-estoque-titulo">Atenção ao estoque</div>
+      <div class="dash-alerta-sub" id="dash-estoque-lista"></div>
+    </div>
+    <button class="dash-alerta-btn" onclick="document.getElementById('menu-produtos').click()">
+      Ver produtos →
+    </button>
+  </div>
+
+  <div id="dash-alerta-validade" class="dash-alerta dash-alerta-laranja" style="display:none">
+      <div class="dash-alerta-icon"><i class="fas fa-calendar-times"></i></div>
+      <div class="dash-alerta-body">
+        <div class="dash-alerta-title" id="dash-validade-titulo">Atenção à validade</div>
+        <div class="dash-alerta-sub" id="dash-validade-lista"></div>
+      </div>
+      <button class="dash-alerta-btn" onclick="document.getElementById('menu-produtos').click()">
+        Ver produtos →
+      </button>
+    </div>
+
+  </div>
+
         <div class="dash-rankings">
           <div class="card ranking-card">
             <div class="ranking-header">
@@ -490,24 +584,71 @@
       </div>
 
       <div id="pdv" class="tab-content">
+                <!-- ══ ALERTA: Pedidos pendentes do app do cliente ══ -->
+        <div id="pdv-alerta-pedidos"
+          class="dash-alerta dash-alerta-vermelho pdv-alerta-pulso"
+          style="display:none;margin:12px 16px 4px;cursor:pointer"
+          onclick="showTab('pedidos', { currentTarget: document.getElementById('menu-pedidos') })">
+          <div class="dash-alerta-icon" style="animation:_pdvAlertaPulse 1.5s ease-in-out infinite">
+            <i class="fas fa-bell"></i>
+          </div>
+          <div class="dash-alerta-body">
+            <div class="dash-alerta-title" id="pdv-alerta-titulo">
+              🔔 Pedidos aguardando aceitação
+            </div>
+            <div class="dash-alerta-sub" id="pdv-alerta-sub">
+              Carregando…
+            </div>
+          </div>
+          <button class="dash-alerta-btn" type="button"
+            onclick="event.stopPropagation(); showTab('pedidos', { currentTarget: document.getElementById('menu-pedidos') })">
+            Ver pedidos →
+          </button>
+        </div>
         <!-- PDV Header -->
         <div class="pdv-header-bar">
           <h2 class="section-title" style="margin:0" data-i18n="pdv.title">🏪 PDV — Caixa</h2>
         </div>
 
-        <!-- ===== PAINEL DE ABERTURA DE CAIXA (PDV) ===== -->
+                <!-- ===== PAINEL DE ABERTURA DE CAIXA (PDV) ===== -->
         <div id="pdv-painel-caixa" style="margin:12px 16px 4px;padding:14px 18px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
           <div style="display:flex;align-items:center;gap:10px">
             <div style="width:4px;height:20px;background:var(--primary,#1a7a2e);border-radius:2px"></div>
             <span style="font-weight:700;font-size:0.95rem;color:#334155" data-i18n="pdv.controle_caixa">Controle de Caixa</span>
             <span id="pdv-status-caixa" style="font-size:0.82rem;color:#e74c3c" data-i18n="pdv.caixa_fechado">🔴 Caixa fechado</span>
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+
+            <!-- Botão Abrir Caixa (aparece quando fechado) -->
             <button id="pdv-btn-abrir-caixa"
               onclick="abrirModalCaixa('abertura')"
               style="padding:9px 20px;background:linear-gradient(135deg,#1a7a2e,#145a22);color:#fff;border:none;border-radius:9px;font-weight:700;font-size:0.88rem;cursor:pointer;display:flex;align-items:center;gap:6px">
               <i class="fas fa-door-open"></i> <span data-i18n="pdv.abrir_caixa">Abrir Caixa</span>
             </button>
+
+            <!-- Botões de movimentação (aparecem quando aberto) -->
+            <button id="pdv-btn-suprimento"
+              onclick="abrirModalCaixa('suprimento')"
+              style="padding:9px 16px;background:#3498db;color:#fff;border:none;border-radius:9px;font-weight:700;font-size:0.85rem;cursor:pointer;display:none;align-items:center;gap:6px"
+              title="Adicionar dinheiro ao caixa">
+              <i class="fas fa-plus-circle"></i> <span data-i18n="fin.suprimento_btn">Suprimento</span>
+            </button>
+
+            <button id="pdv-btn-sangria"
+              onclick="abrirModalCaixa('sangria')"
+              style="padding:9px 16px;background:#f39c12;color:#fff;border:none;border-radius:9px;font-weight:700;font-size:0.85rem;cursor:pointer;display:none;align-items:center;gap:6px"
+              title="Retirar dinheiro do caixa">
+              <i class="fas fa-hand-holding-usd"></i> <span data-i18n="fin.sangria_btn">Sangria</span>
+            </button>
+
+            <button id="pdv-btn-despesa"
+              onclick="abrirModalCaixa('despesa')"
+              style="padding:9px 16px;background:#e67e22;color:#fff;border:none;border-radius:9px;font-weight:700;font-size:0.85rem;cursor:pointer;display:none;align-items:center;gap:6px"
+              title="Registrar uma despesa do caixa">
+              <i class="fas fa-file-invoice-dollar"></i> <span data-i18n="fin.despesa_btn">Despesa</span>
+            </button>
+
+            <!-- Botão Fechar Caixa (aparece quando aberto) -->
             <button id="pdv-btn-fechar-caixa"
               onclick="fecharCaixaResumo()"
               style="padding:9px 20px;background:#c0392b;color:#fff;border:none;border-radius:9px;font-weight:700;font-size:0.88rem;cursor:pointer;display:none;align-items:center;gap:6px">
@@ -537,21 +678,61 @@
                 🛒 Itens do Pedido
               </div>
 
-              <!-- Busca por código de barras -->
-              <div class="pdv-busca-wrap" style="position:relative">
-                <i class="fas fa-barcode pdv-busca-icon"></i>
-                <input type="text" id="pdv-busca" class="pdv-busca-input"
-                  placeholder="Código de barras ou nome do produto…"
-                  oninput="filtrarPDV(this.value)"
-                  onkeydown="pdvBuscaKeydown(event)"
-                  autocomplete="off" />
+              <!-- Multiplicador de quantidade -->
+              <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:#f0fdf4;border-bottom:1px solid #dcfce7">
+                <span style="font-size:0.72rem;font-weight:700;color:#166534;white-space:nowrap">
+                  <i class="fas fa-layer-group"></i> Qtd:
+                </span>
+                <button class="pdv-qty-mult-btn active" data-qty="1" onclick="pdvSetQtyMultiplier(1)"
+                  style="padding:4px 10px;border-radius:6px;border:1.5px solid #16a34a;background:#fff;color:#166534;font-weight:700;font-size:0.78rem;cursor:pointer">1</button>
+                <button class="pdv-qty-mult-btn" data-qty="5" onclick="pdvSetQtyMultiplier(5)"
+                  style="padding:4px 10px;border-radius:6px;border:1.5px solid #16a34a;background:#fff;color:#166534;font-weight:700;font-size:0.78rem;cursor:pointer">5</button>
+                <button class="pdv-qty-mult-btn" data-qty="10" onclick="pdvSetQtyMultiplier(10)"
+                  style="padding:4px 10px;border-radius:6px;border:1.5px solid #16a34a;background:#fff;color:#166534;font-weight:700;font-size:0.78rem;cursor:pointer">10</button>
+                <span id="pdv-qty-mult-badge"
+                  style="display:none;background:#16a34a;color:#fff;padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:700;margin-left:auto">
+                </span>
+                <span style="font-size:0.68rem;color:#64748b;white-space:nowrap">
+                  ou digite <code style="background:#e2e8f0;padding:1px 4px;border-radius:3px">10+</code> antes de escanear
+                </span>
+              </div>
                 <span id="pdv-f2-badge" class="pdv-f2-badge" style="display:none">🔍 PREÇO</span>
                 <button id="pdv-f2-btn" class="pdv-f2-btn" onclick="togglePdvF2Mode()" title="F2 – Consultar preço sem adicionar ao carrinho">
                   <span>F2</span> <i class="fas fa-tag"></i>
                 </button>
                 <!-- Dropdown de resultados -->
                 <div id="pdv-busca-resultados" class="pdv-busca-dropdown" style="display:none"></div>
-              </div>
+                <!-- ── Busca / Scanner de código de barras ── -->
+                <div class="pdv-busca-wrap">
+                  <i class="fas fa-search pdv-busca-icon"></i>
+
+                  <input
+                    type="text"
+                    id="pdv-busca"
+                    class="pdv-busca-input"
+                    placeholder="🔍 Buscar produto, código ou escanear..."
+                    autocomplete="off"
+                    autocorrect="off"
+                    autocapitalize="off"
+                    spellcheck="false"
+                    oninput="filtrarPDV(this.value)"
+                    onkeydown="pdvBuscaKeydown(event)"
+                  />
+
+                  <span id="pdv-f2-badge" class="pdv-f2-badge" style="display:none">🔍 PREÇO</span>
+
+                  <button
+                    id="pdv-f2-btn"
+                    class="pdv-f2-btn"
+                    onclick="togglePdvF2Mode()"
+                    title="F2 – Consultar preço sem adicionar ao carrinho"
+                    style="position:absolute;right:14px;top:50%;transform:translateY(-50%)">
+                    <span>F2</span> <i class="fas fa-tag"></i>
+                  </button>
+
+                  <!-- Dropdown de resultados (fica colado abaixo do input) -->
+                  <div id="pdv-busca-resultados" class="pdv-busca-dropdown" style="display:none"></div>
+                </div>
 
               <!-- Mesas ativas -->
               <div class="pdv-mesas-bar" id="pdv-mesas-bar" style="display:none">
@@ -562,7 +743,9 @@
 
               <!-- Containers fantasma: JS ainda tenta renderizar categorias/grid -->
               <div id="pdv-cat-filter" style="display:none"></div>
-              <div style="display:none"><div id="pdv-grid"></div></div>
+              <div id="pdv-grid-wrap" style="display:none;overflow-y:auto;padding:8px">
+                <div id="pdv-grid"></div>
+              </div>
 
               <!-- Lista de itens do carrinho — ocupa todo o espaço restante -->
               <div class="pdv-dir-lista-wrap" style="flex:1">
@@ -645,7 +828,7 @@
                   <input type="number" id="balcao-frete" class="pdv-dir-input"
                     placeholder="Frete (Gs)" min="0" step="1000"
                     style="border-color:#27ae60;flex:1" oninput="atualizarCarrinhoPDV()" />
-                  <button onclick="calcularFretePDV()"
+                  <button id="btn-gps-pdv" onclick="calcularFretePDV()"
                     style="padding:6px 10px;background:#1a7a2e;color:#fff;border:none;
                            border-radius:5px;font-size:0.76rem;cursor:pointer;font-weight:700;white-space:nowrap">
                     📍 Rota
@@ -852,6 +1035,42 @@
         <i class="fas fa-calculator"></i>
         <span data-i18n="fin.fechar_dia">Fechar Dia</span>
       </button>
+    </div>
+  </div>
+
+    <!-- ===== HISTÓRICO DE BOLETINS DE FECHAMENTO ===== -->
+  <div class="card" style="margin-top: 20px; margin-bottom: 20px; padding: 0;" id="card-hist-fechamentos">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid #f0f0f0;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:4px;height:20px;background:var(--primary);border-radius:2px"></div>
+        <h3 style="margin:0;color:#444;font-size:0.95rem;">📋 Histórico de Boletins de Fechamento</h3>
+        <span id="hist-fech-contador" style="background:#eef2ff;color:#4f46e5;font-size:0.75rem;font-weight:700;padding:2px 8px;border-radius:20px;display:none;"></span>
+      </div>
+      <button onclick="carregarHistoricoFechamentos()" class="btn btn-primary" style="font-size:0.83rem;padding:7px 14px;height:auto;">
+        <i class="fas fa-sync-alt"></i> Atualizar
+      </button>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="table" style="margin:0;font-size:0.85rem;" id="tabela-hist-fechamentos">
+        <thead>
+          <tr>
+            <th style="white-space:nowrap">Sessão</th>
+            <th style="white-space:nowrap">Período</th>
+            <th>Operador</th>
+            <th style="text-align:right">Faturamento</th>
+            <th style="text-align:right">Resultado</th>
+            <th style="text-align:right">Dinheiro Gaveta</th>
+            <th style="text-align:center">Ações</th>
+          </tr>
+        </thead>
+        <tbody id="hist-fech-tbody">
+          <tr>
+            <td colspan="7" style="text-align:center;color:#bbb;padding:24px;font-size:0.85rem;">
+              Clique em "Atualizar" para carregar o histórico
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   </div>
 
@@ -1081,11 +1300,6 @@
       </div>
 
 <div id="produtos" class="tab-content">
-  
-  <div class="header-title" style="flex-direction: column; align-items: flex-start; gap: 6px; margin-bottom: 0;">
-    <h2 style="font-size:1.5rem;font-weight:700;color:#1e293b;margin:0">Gestão de Estoque e Equipe</h2>
-    <p style="font-size:0.82rem;color:#94a3b8;margin:0">Gerencie seus produtos, estoque e destaque no PDV</p>
-  </div>
 
   <div id="lista-produtos-wrapper" class="subtab-content" style="display: block">
 
@@ -1182,6 +1396,15 @@
             <option value="vencido">Vencido</option>
             <option value="proximo">Vence em breve (≤ 3 dias)</option>
             <option value="ok">Dentro do prazo</option>
+          </select>
+        </div>
+        <!-- Status Ativo/Pausado -->
+        <div class="pt-filtro-group">
+          <label class="pt-filtro-label">Status</label>
+          <select id="pt-filtro-status" class="pt-filtro-select" onchange="ptAplicarFiltros()">
+            <option value="">Todos</option>
+            <option value="ativo">🟢 Apenas ativos</option>
+            <option value="pausado">⏸ Apenas pausados</option>
           </select>
         </div>
         <!-- Destaque -->
@@ -1311,6 +1534,7 @@
               <label>Taxa: 1 R$ = <b id="vc-taxa-label">?</b> Gs</label>
               <input type="number" id="vc-taxa" class="form-control" min="1" step="1"
                 placeholder="Ex: 1450" oninput="vcAtualizarLabel()">
+              <small style="color:#888;font-size:0.72rem">Valor atual do câmbio real → guarani</small>
             </div>
             <div class="form-group" style="flex:1;min-width:160px;margin:0">
               <label>Posição no card</label>
@@ -2270,6 +2494,86 @@
           </div>
         </div>
 
+        <!-- ── FAIXAS DE PREÇO (Varejo / Atacado) ─────────────── -->
+        <div class="form-group" style="background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:10px;padding:12px;margin-top:4px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <label style="font-weight:700;margin:0;font-size:0.9rem">
+              💰 Preços por quantidade
+              <small style="display:block;font-weight:normal;color:#1e40af;font-size:0.78rem">
+                Cobra valor diferente conforme o total comprado
+              </small>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" id="prod-tem-faixas" style="width:18px;height:18px"
+                onchange="toggleFaixasPreco(this.checked)">
+              <span style="font-size:0.9rem">Ativar</span>
+            </label>
+          </div>
+
+          <div id="faixas-preco-area" style="display:none">
+
+            <!-- Preço unitário base -->
+            <div class="form-group" style="margin:0 0 10px">
+              <label style="font-size:0.78rem;color:#1e40af;font-weight:600">
+                Preço unitário (1 un)
+              </label>
+              <input type="number" id="prod-faixa-unitario" class="form-control"
+                min="0" step="100" placeholder="Ex: 12000"
+                style="margin-top:4px;font-weight:700;border:2px solid #3b82f6">
+            </div>
+
+            <!-- Faixa 1: desconto por quantidade -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+              <div class="form-group" style="margin:0">
+                <label style="font-size:0.78rem;color:#166534;font-weight:600">
+                  A partir de (un)
+                </label>
+                <input type="number" id="prod-faixa1-min" class="form-control"
+                  min="2" step="1" placeholder="Ex: 5"
+                  style="margin-top:4px;border:2px solid #16a34a">
+              </div>
+              <div class="form-group" style="margin:0">
+                <label style="font-size:0.78rem;color:#166534;font-weight:600">
+                  Preço un. nessa faixa (Gs)
+                </label>
+                <input type="number" id="prod-faixa1-preco" class="form-control"
+                  min="0" step="100" placeholder="Ex: 11500"
+                  style="margin-top:4px;font-weight:700;border:2px solid #16a34a">
+              </div>
+            </div>
+
+            <!-- Faixa 2: atacado -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+              <div class="form-group" style="margin:0">
+                <label style="font-size:0.78rem;color:#991b1b;font-weight:600">
+                  Atacado a partir de (un)
+                </label>
+                <input type="number" id="prod-faixa2-min" class="form-control"
+                  min="3" step="1" placeholder="Ex: 10"
+                  style="margin-top:4px;border:2px solid #dc2626">
+              </div>
+              <div class="form-group" style="margin:0">
+                <label style="font-size:0.78rem;color:#991b1b;font-weight:600">
+                  Preço un. atacado (Gs)
+                </label>
+                <input type="number" id="prod-faixa2-preco" class="form-control"
+                  min="0" step="100" placeholder="Ex: 10000"
+                  style="margin-top:4px;font-weight:700;border:2px solid #dc2626">
+              </div>
+            </div>
+
+            <!-- Preview -->
+            <div id="faixas-preview" style="background:#fff;border-radius:8px;padding:10px 14px;font-size:0.82rem;color:#1e40af;line-height:1.6"></div>
+
+            <div style="font-size:0.72rem;color:#64748b;margin-top:8px;line-height:1.5">
+              💡 Deixe "faixa 1" ou "faixa 2" em branco para desativar essa faixa.<br>
+              💡 O preço cobrado é sempre da faixa <b>atingida</b> (não soma por blocos).<br>
+              💡 Se só preencher o atacado, o sistema pula direto para ele nas quantidades maiores.
+            </div>
+          </div>
+        </div>
+        <!-- ── Fim Faixas de Preço ─────────────────────────────── -->
+
         <!-- Promoção -->
         <div class="form-group" style="background:#fef2f2;border:1.5px solid #fca5a5;border-radius:10px;padding:12px;margin-top:2px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
@@ -2349,6 +2653,14 @@
               <label style="font-size:0.78rem;color:#b45309;font-weight:600">Data de Vencimento</label>
               <input type="date" id="prod-data-validade" class="form-control" style="margin-top:4px">
             </div>
+            <div class="form-group" style="margin:8px 0 0">
+              <label style="font-size:0.78rem;color:#b45309;font-weight:600">Avisar com quantos dias de antecedência?</label>
+              <select id="prod-dias-alerta-validade" class="form-control" style="margin-top:4px">
+                <option value="7">7 dias antes</option>
+                <option value="15">15 dias antes</option>
+                <option value="30">30 dias antes</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -2382,6 +2694,8 @@
         <div id="ve-alertas-estoque" style="display:none;margin-bottom:10px"></div>
         <div id="secao-variacoes-estoque"></div>
         <!-- ── Fim Variações ───────────────────────────────────── -->
+
+                
 
         <div class="modal-actions" style="margin-top:16px">
           <button class="btn btn-primary" onclick="salvarProduto()" data-i18n="prod.salvar">Salvar Produto</button>
@@ -2566,8 +2880,10 @@
     <script src="subscriptionService.js"></script>
     <script src="subscriptionUI.js"></script>
     <script src="subscriptionAdmin.js"></script>
-    <script src="admin.js"></script>
+    <script src="varejoUtils.js"></script>
+    <script src="freteUtils.js"></script>
     <script src="filiais.js"></script>
+    <script src="admin.js"></script>
 
 <!-- ═══════════════════ ABA MENSALISTAS ═══════════════════ -->
 <div id="mensalistas" class="tab-content">
@@ -3351,6 +3667,11 @@
     </div>
   </div>
 </div>
+<style>
+  @media (max-width: 360px) {
+    #_kg-input-g { font-size: 1.25rem !important; }
+  }
+</style>
 <style>
   @keyframes scaleIn { from { opacity:0; transform:scale(0.9); } to { opacity:1; transform:scale(1); } }
   @keyframes pulse   { 0%,100% { opacity:0.5; } 50% { opacity:1; } }

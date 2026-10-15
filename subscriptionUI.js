@@ -171,6 +171,10 @@ const SubscriptionUI = (() => {
    * Renderiza (ou remove) a barra de alerta no topo.
    * @param {object} statusObj — retorno de calcularStatusAssinatura()
    */
+    /**
+   * Renderiza (ou remove) a barra de alerta no topo.
+   * @param {object} statusObj — retorno de calcularStatusAssinatura()
+   */
   function renderizarBarra(statusObj) {
     _injetarEstilos();
     const { status } = statusObj;
@@ -200,9 +204,12 @@ const SubscriptionUI = (() => {
         title="Fechar aviso">✕</button>
     `;
 
-    // Insere antes do primeiro filho do body ou do main-content
+    // Insere como PRIMEIRO FILHO ELEMENTO do .main-content (ou do body).
+    // Usamos firstElementChild (não firstChild) porque firstChild pode
+    // retornar um nó de texto em branco (whitespace entre tags HTML),
+    // o que quebra o seletor CSS `.main-content > #subscription-alert-bar`.
     const mainContent = document.querySelector('.main-content') || document.body;
-    mainContent.insertBefore(barra, mainContent.firstChild);
+    mainContent.insertBefore(barra, mainContent.firstElementChild || null);
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -284,21 +291,37 @@ const SubscriptionUI = (() => {
    * @param {string} [opts.contatoFone]   — WhatsApp do suporte
    * @param {string} [opts.contatoNome]   — Nome do suporte
    */
-  async function inicializar({ supabaseUrl, supabaseKey, contatoFone = '', contatoNome = 'Suporte', perfil = null }) {
+    async function inicializar({ supabaseUrl, supabaseKey, contatoFone = '', contatoNome = 'Suporte', perfil = null }) {
     try {
       const { getServerDate, calcularStatusAssinatura } = window.SubscriptionDateUtils;
 
-      // CORREÇÃO Bugs 1 + 4:
-      // Antes: `const isGestor = window.perfilUsuario === 'adminMaster'`
-      //   → leitura síncrona no momento do init (race condition: perfilUsuario ainda null)
-      //   → closure capturava o valor null para sempre no listener realtime
-      // Depois: getter lazy avaliado a cada chamada.
-      //   O parâmetro `perfil` permite o caller passar o valor já resolvido,
-      //   eliminando a corrida. O fallback para window.perfilUsuario cobre casos
-      //   onde inicializar() é chamado antes da autenticação completar.
-      const getIsGestor = () => (perfil ?? window.perfilUsuario) === 'adminMaster';
+      // ══════════════════════════════════════════════════════════════════
+      //  Detecção de adminMaster com 4 redes de segurança independentes.
+      //  Basta UMA delas confirmar para que o bloqueio nunca seja aplicado.
+      //  Motivo: se adminMaster for bloqueado, ninguém consegue entrar para
+      //  confirmar o pagamento e desbloquear — deadlock total do sistema.
+      // ══════════════════════════════════════════════════════════════════
+      const _detectarAdminMaster = () => {
+        // Rede 1: parâmetro explícito passado por admin.js
+        if (perfil === 'adminMaster') return true;
 
-      // Paralelo: data do servidor + config da assinatura
+        // Rede 2: global window.perfilUsuario (fallback comum)
+        if (window.perfilUsuario === 'adminMaster') return true;
+
+        // Rede 3: window._perfilCargo (caso algum módulo set)
+        if (window._perfilCargo === 'adminMaster') return true;
+
+        // Rede 4: DOM — lê o cargo renderizado na sidebar
+        try {
+          const cargoEl = document.getElementById('user-cargo');
+          if (cargoEl && /ADMIN\s*MASTER/i.test(cargoEl.textContent || '')) {
+            return true;
+          }
+        } catch (_) {}
+
+        return false;
+      };
+
       const [hoje, cfg] = await Promise.all([
         getServerDate(supabaseUrl, supabaseKey),
         SubscriptionService.getAssinatura(),
@@ -312,8 +335,8 @@ const SubscriptionUI = (() => {
       const statusObj = calcularStatusAssinatura(cfg, hoje);
 
       if (statusObj.status === 'bloqueado') {
-        if (getIsGestor()) {
-          // Gestor vê apenas barra vermelha de aviso, nunca tela de bloqueio
+        if (_detectarAdminMaster()) {
+          // Admin Master: apenas barra vermelha de aviso (nunca tela cheia)
           renderizarBarra({ ...statusObj, status: 'carencia' });
         } else {
           exibirTelaBloqueio(contatoFone, contatoNome);
@@ -323,13 +346,11 @@ const SubscriptionUI = (() => {
       }
 
       // Realtime: propaga mudanças em tempo real
-      // CORREÇÃO Bug 4: getIsGestor() é chamado dentro do callback (não capturado na closure),
-      // então sempre reflete o perfilUsuario atualizado no momento do evento.
       SubscriptionService.assinarMudancas(async (novoCfg) => {
         const novoHoje = await getServerDate(supabaseUrl, supabaseKey);
         const novoStatus = calcularStatusAssinatura(novoCfg, novoHoje);
         if (novoStatus.status === 'bloqueado') {
-          if (getIsGestor()) {
+          if (_detectarAdminMaster()) {
             renderizarBarra({ ...novoStatus, status: 'carencia' });
           } else {
             exibirTelaBloqueio(contatoFone, contatoNome);
@@ -339,10 +360,11 @@ const SubscriptionUI = (() => {
           renderizarBarra(novoStatus);
         }
       });
-
     } catch (err) {
       console.error('[Assinatura] Erro ao inicializar:', err);
-      // Em caso de erro de rede, nunca bloqueia
+      // Fail-safe: NUNCA bloqueia por exceção — o usuário precisa poder entrar
+      // para corrigir problemas. O bloqueio só acontece quando o status é
+      // explicitamente "bloqueado" E o usuário não é adminMaster.
     }
   }
 

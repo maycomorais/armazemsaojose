@@ -12,19 +12,24 @@
     <!-- manifest dinâmico injetado após supabaseClient.js carregar (ver script no fim do body) -->
     <link rel="apple-touch-icon" sizes="180x180" href="img/apple-touch-icon.png">
     <title>Delivery</title>
-    <!-- Open Graph / WhatsApp / Facebook -->
+        <!-- Open Graph / WhatsApp / Facebook -->
+    <!-- Fallback inicial: valores razoáveis até o JS rodar.
+         WhatsApp lê o HTML cru, então esses valores são o que ele vê
+         até que a Edge Function (share-preview) sobrescreva. -->
     <meta property="og:type"        content="website">
     <meta property="og:url"         content="">
-    <meta property="og:title"       content="Delivery">
-    <meta property="og:description" content="Pide tu plato favorito con entrega rápida">
-    <meta property="og:image"       content="">
+    <meta property="og:site_name"   content="Delivery">
+    <meta property="og:title"       content="Delivery — Pide tu producto favorito">
+    <meta property="og:description" content="Pide tu producto favorito con entrega rápida">
+    <meta property="og:image"       content="img/og-default.jpg">
     <meta property="og:image:width"  content="1200">
     <meta property="og:image:height" content="630">
+    <meta property="og:image:alt"   content="Delivery">
     <!-- Twitter Card -->
     <meta name="twitter:card"        content="summary_large_image">
-    <meta name="twitter:title"       content="Delivery">
-    <meta name="twitter:description" content="Pide tu plato favorito con entrega rápida">
-    <meta name="twitter:image"       content="">
+    <meta name="twitter:title"       content="Delivery — Pide tu producto favorito">
+    <meta name="twitter:description" content="Pide tu producto favorito con entrega rápida">
+    <meta name="twitter:image"       content="img/og-default.jpg">
     <link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="img/favicon-16x16.png">
     <link rel="stylesheet" href="style.css">
@@ -432,17 +437,45 @@ const _traducoes = {
 
 function _aplicarIdioma(lang) {
     const t = _traducoes[lang] || _traducoes['es'];
-    
-    // Aplicar por data-lang-key (elementos com esse atributo são traduzidos automaticamente)
+
+    // ── 1. Elementos com data-lang-key ─────────────────────────
     document.querySelectorAll('[data-lang-key]').forEach(el => {
         const key = el.getAttribute('data-lang-key');
-        if (t[key]) el.textContent = t[key];
+        if (!t[key]) return;
+
+        // Salva ícones/children que devem ser preservados
+        const iconesHtml = [...el.children]
+            .map(c => c.outerHTML)
+            .join('');
+
+        // Substitui só o texto, mantendo os ícones
+        el.innerHTML = iconesHtml ? `${iconesHtml} ${t[key]}` : t[key];
     });
 
-    // Elementos com data-lang-key-placeholder
+    // ── 2. Placeholders com data-lang-key-placeholder ──────────
     document.querySelectorAll('[data-lang-key-placeholder]').forEach(el => {
         const key = el.getAttribute('data-lang-key-placeholder');
         if (t[key]) el.placeholder = t[key];
+    });
+
+    // ── 3. Inputs que só têm placeholder hardcoded (mapeados manualmente) ──
+    const placeholdersFixos = {
+        'cli-nome': { es: 'Ej: Juan Pérez', pt: 'Ex: João Silva', en: 'Ex: John Smith', de: 'Z.B.: Hans Müller' },
+        'cli-tel':  { es: '99123-4567',    pt: '99123-4567',    en: '99123-4567',    de: '99123-4567' },
+    };
+    Object.entries(placeholdersFixos).forEach(([id, mapa]) => {
+        const el = document.getElementById(id);
+        if (el && mapa[lang]) el.placeholder = mapa[lang];
+    });
+
+    // ── 4. Erros de validação inline ───────────────────────────
+    const errosTraduzidos = {
+        'erro-nome': { es: 'El nombre es obligatorio', pt: 'O nome é obrigatório', en: 'Name is required', de: 'Name ist erforderlich' },
+        'erro-tel':  { es: 'El teléfono es obligatorio', pt: 'O telefone é obrigatório', en: 'Phone is required', de: 'Telefon ist erforderlich' },
+    };
+    Object.entries(errosTraduzidos).forEach(([id, mapa]) => {
+        const el = document.getElementById(id);
+        if (el && mapa[lang]) el.textContent = mapa[lang];
     });
 }
 
@@ -548,7 +581,7 @@ window.addEventListener('DOMContentLoaded', () => {
         
         <!-- Formulário de busca -->
         <div id="track-form" style="display: block;">
-            <p style="margin: 0 0 12px 0; font-size: 0.9rem; opacity: 0.9;">Ingrese el número de su pedido para seguirlo:</p>
+            <p style="margin: 0 0 12px 0; font-size: 0.9rem; opacity: 0.9;" data-lang-key="track-instrucao">Ingrese el número de su pedido para seguirlo:</p>
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
                 <input type="number" id="track-pedido-input" data-lang-key-placeholder="track-placeholder" placeholder="Ej: 81" style="flex: 1; min-width: 80px; padding: 12px; border: none; border-radius: 8px; font-size: 1rem; font-weight: 600;">
                 <button onclick="buscarPedido()" style="padding: 12px 16px; background: white; color: #667eea; border: none; border-radius: 8px; font-weight: 700; cursor: pointer; white-space: nowrap; flex-shrink: 0;" data-lang-key="track-btn">
@@ -584,8 +617,8 @@ window.addEventListener('DOMContentLoaded', () => {
                     <span>Salió para Entrega</span>
                 </div>
                 <div style="font-size: 0.85rem; line-height: 1.6;">
-                    <strong>Motoboy:</strong> <span id="track-motoboy-nome">-</span><br>
-                    <strong>Contacto:</strong> <a id="track-motoboy-tel" href="#" style="color: var(--primary); text-decoration: none; font-weight: 600;">-</a>
+                    <strong data-lang-key="track-motoboy">Motoboy:</strong> <span id="track-motoboy-nome">-</span><br>
+                    <strong data-lang-key="track-contato">Contacto:</strong> <a id="track-motoboy-tel" href="#" style="color: var(--primary); text-decoration: none; font-weight: 600;">-</a>
                 </div>
             </div>
             
@@ -661,6 +694,46 @@ window.addEventListener('DOMContentLoaded', () => {
                 <!-- RESUMO PIZZA (aparece em tempo real) -->
                 <div id="pizza-resumo" style="display:none; margin:12px 0; background:#fff8f0; border:1px solid #fde8d0; border-radius:12px; overflow:hidden;"></div>
 
+                <!-- FAIXAS DE PREÇO (varejo/atacado) -->
+                <div id="varejo-info" style="display:none; margin:12px 0;">
+                  <div style="background:#1a1a2e; color:#fff; padding:8px 14px;
+                       border-radius:12px 12px 0 0; display:flex;
+                       justify-content:space-between; align-items:center">
+                    <span style="font-weight:800; font-size:0.88rem;
+                          letter-spacing:0.3px">
+                      💰 PREÇO POR QUANTIDADE
+                    </span>
+                    <span id="varejo-badge"
+                      style="font-size:0.7rem; background:#fff; color:#1a1a2e;
+                             padding:3px 10px; border-radius:10px; font-weight:800">
+                    </span>
+                  </div>
+                  <div id="varejo-tiers" style="background:#fff; border:2px solid #1a1a2e;
+                       border-top:none; border-radius:0 0 12px 12px;
+                       padding:12px; display:grid; gap:6px">
+                    <!-- Colunas preenchidas pelo JS -->
+                  </div>
+                  <div style="margin-top:10px; padding:10px 14px; background:#f0fdf4;
+                       border:1.5px solid #86efac; border-radius:10px;
+                       display:flex; justify-content:space-between;
+                       align-items:center">
+                    <span style="font-size:0.85rem; color:#166534">
+                      Você está pagando
+                      <b id="varejo-unit">Gs 0</b> / un
+                    </span>
+                    <span style="font-size:1.15rem; font-weight:900;
+                          color:#16a34a">
+                      Gs <span id="varejo-total">0</span>
+                    </span>
+                  </div>
+                  <div id="varejo-hint" style="display:none; margin-top:8px;
+                       padding:9px 12px; background:#fffbeb;
+                       border:1.5px solid #fcd34d; border-radius:8px;
+                       font-size:0.83rem; color:#92400e; font-weight:600;
+                       text-align:center">
+                  </div>
+                </div>
+
                 <div class="obs-area">
                     <label data-lang-key="modal-obs">¿Alguna observación?</label>
                     <textarea id="modal-obs" data-lang-key-placeholder="modal-obs-ph" placeholder="Ej: Sin cebollín, Salmón Maçaricado, Capricha en la salsa..."></textarea>
@@ -699,7 +772,7 @@ window.addEventListener('DOMContentLoaded', () => {
                     <h4 style="margin-bottom:10px; font-size:1rem; color:#333;" data-lang-key="label-cupom">🎟️ Cupón de Descuento</h4>
                     <div class="cupom-input-group">
                         <input type="text" id="cupom-codigo" data-lang-key-placeholder="label-cupom" placeholder="Ingrese el código" maxlength="20">
-                        <button onclick="aplicarCupom()">Aplicar</button>
+                        <<button onclick="aplicarCupom()" data-lang-key="btn-aplicar-cupom">Aplicar</button>
                     </div>
                     <div id="cupom-msg"></div>
                 </div>
@@ -854,13 +927,9 @@ window.addEventListener('DOMContentLoaded', () => {
     <!-- ===== TRACKING DE PEDIDO ===== -->
     <!-- ===== RODAPÉ ===== -->
     <footer style="background:#2c3e50; color:#ecf0f1; text-align:center; padding:20px 10px; margin-top:40px; font-size:0.9rem;">
-        <p style="margin:0 0 5px 0;">💼 Desarrollado por <strong>LinkPy Software Factory</strong></p>
-        <p style="margin:0; font-size:0.85rem;">
-            <i class="fab fa-globe"></i> website: 
-            <a href="https://linkpy.online" target="_blank" style="color:#25D366; text-decoration:none; font-weight:600;">
-                linkPY.online
-            </a>
-        </p>
+        <p style="margin:0 0 5px 0;" data-lang-key="footer-dev">💼 Desarrollado por <strong>LinkPy Software Factory</strong></p>
+        <p style="margin:0; font-size:0.85rem;" data-lang-key="footer-site">🌐 website: linkPY.online</p>
+        <p style="margin:10px 0 0 0; font-size:0.75rem; color:#95a5a6;" data-lang-key="footer-tag">Soluciones tecnológicas para restaurantes y servicios de entrega.</p>
         <p style="margin:10px 0 0 0; font-size:0.75rem; color:#95a5a6;">
             Soluciones tecnológicas para restaurantes y servicios de entrega.
         </p>
@@ -872,7 +941,7 @@ window.addEventListener('DOMContentLoaded', () => {
             <div style="display:flex; align-items:center; gap:15px;">
                 <img id="pwa-banner-icon" src="" alt="" style="width:45px; height:45px; border-radius:10px; background:rgba(255,255,255,0.2); padding:3px; object-fit:cover; display:none">
                 <div>
-                    <div style="font-weight:700; font-size:1rem;">📲 Instalar <span id="pwa-nome-app">o App</span></div>
+                    <div style="font-weight:700; font-size:1rem;" data-lang-key="pwa-instalar-titulo">📲 Instalar o App</div>
                     <div style="font-size:0.85rem; opacity:0.9;" data-lang-key="pwa-subtitle">Acesse mais rápido pela tela inicial</div>
                 </div>
             </div>
@@ -885,46 +954,79 @@ window.addEventListener('DOMContentLoaded', () => {
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <script src="supabaseClient.js"></script>
+    <script src="varejoUtils.js"></script>
+    <script src="freteUtils.js"></script>
     <script src="app.js"></script>
     <script>
-    // ── Manifest Dinâmico — roda APÓS supabaseClient.js carregar ─────────
-    (async function _injectManifest() {
-      try {
-        const res = await fetch('manifest.json');
-        const m   = await res.json();
-        // _SUPABASE_URL e _SUPABASE_KEY já estão disponíveis do supabaseClient.js
-        const supaUrl = (typeof _SUPABASE_URL !== 'undefined') ? _SUPABASE_URL : '';
-        const supaKey = (typeof _SUPABASE_KEY !== 'undefined') ? _SUPABASE_KEY : '';
-        if (!supaUrl || !supaKey) return;
-        const cfgRes = await fetch(
-          `${supaUrl}/rest/v1/configuracoes?select=nome_restaurante,cor_primaria,logo_url,icone_url&limit=1`,
-          { headers: { 'apikey': supaKey, 'Accept': 'application/json' } }
-        );
-        if (!cfgRes.ok) return;
-        const rows = await cfgRes.json();
-        const cfg  = rows?.[0] || {};
-        if (cfg.nome_restaurante) {
-          m.name       = cfg.nome_restaurante;
-          m.short_name = cfg.nome_restaurante.substring(0, 12);
-          const mt = document.getElementById('meta-app-title');
-          if (mt) mt.setAttribute('content', cfg.nome_restaurante);
-          document.title = cfg.nome_restaurante + ' — Delivery';
-        }
-        if (cfg.cor_primaria) m.theme_color = cfg.cor_primaria;
-        const iconUrl = cfg.logo_url || cfg.icone_url || '';
-        if (iconUrl) {
-          m.icons = [
-            { src: iconUrl, sizes: '192x192', type: 'image/jpeg', purpose: 'any maskable' },
-            { src: iconUrl, sizes: '512x512', type: 'image/jpeg', purpose: 'any maskable' },
-          ];
-          if (m.shortcuts?.[0]?.icons) m.shortcuts[0].icons = [{ src: iconUrl, sizes: '96x96' }];
-        }
-        const blob    = new Blob([JSON.stringify(m)], { type: 'application/manifest+json' });
-        const blobUrl = URL.createObjectURL(blob);
-        const link    = document.getElementById('link-manifest');
-        if (link) link.setAttribute('href', blobUrl);
-      } catch(_) { /* fallback: manifest estático */ }
-    })();
+        // ── Manifest Dinâmico + OG tags dinâmicas ───────────────────────────
+        // Roda APÓS supabaseClient.js carregar.
+        // • Atualiza manifest.json (nome, ícone, tema) → afeta PWA e navegador.
+        // • Atualiza <meta property="og:*"> → afeta Facebook, Twitter, Telegram,
+        //   Slack, LinkedIn. NÃO afeta o WhatsApp (que não executa JS e lê o HTML
+        //   cru). Para o WhatsApp, use a Edge Function `share-preview`.
+        (async function _injectManifest() {
+        try {
+            const res = await fetch('manifest.json');
+            const m   = await res.json();
+
+            // _SUPABASE_URL e _SUPABASE_KEY já estão disponíveis do supabaseClient.js
+            const supaUrl = (typeof _SUPABASE_URL !== 'undefined') ? _SUPABASE_URL : '';
+            const supaKey = (typeof _SUPABASE_KEY !== 'undefined') ? _SUPABASE_KEY : '';
+            if (!supaUrl || !supaKey) return;
+
+            const cfgRes = await fetch(
+            `${supaUrl}/rest/v1/configuracoes?select=nome_restaurante,descricao_loja,cor_primaria,logo_url,icone_url&limit=1`,
+            { headers: { 'apikey': supaKey, 'Accept': 'application/json' } }
+            );
+            if (!cfgRes.ok) return;
+            const rows = await cfgRes.json();
+            const cfg  = rows?.[0] || {};
+
+            // ── Manifest (PWA) ──
+            if (cfg.nome_restaurante) {
+            m.name       = cfg.nome_restaurante;
+            m.short_name = cfg.nome_restaurante.substring(0, 12);
+            const mt = document.getElementById('meta-app-title');
+            if (mt) mt.setAttribute('content', cfg.nome_restaurante);
+            document.title = cfg.nome_restaurante + ' — Delivery';
+            }
+            if (cfg.cor_primaria) m.theme_color = cfg.cor_primaria;
+
+            const iconUrl = cfg.logo_url || cfg.icone_url || '';
+            if (iconUrl) {
+            m.icons = [
+                { src: iconUrl, sizes: '192x192', type: 'image/jpeg', purpose: 'any maskable' },
+                { src: iconUrl, sizes: '512x512', type: 'image/jpeg', purpose: 'any maskable' },
+            ];
+            if (m.shortcuts?.[0]?.icons) m.shortcuts[0].icons = [{ src: iconUrl, sizes: '96x96' }];
+            }
+
+            const blob    = new Blob([JSON.stringify(m)], { type: 'application/manifest+json' });
+            const blobUrl = URL.createObjectURL(blob);
+            const link    = document.getElementById('link-manifest');
+            if (link) link.setAttribute('href', blobUrl);
+
+            // ── OG tags dinâmicas ──────────────────────────────────────────
+            // Ajuda Facebook, Twitter, Telegram, Slack, LinkedIn a exibir
+            // preview correto ao compartilhar o link. O WhatsApp NÃO é afetado
+            // (não executa JS — depende da Edge Function `share-preview`).
+            if (cfg.nome_restaurante) {
+            const _setMeta = (sel, val) => {
+                const el = document.querySelector(sel);
+                if (el && val) el.setAttribute('content', val);
+            };
+            const _desc = cfg.descricao_loja || 'Pide tu plato favorito con entrega rápida';
+            _setMeta('meta[property="og:title"]',       cfg.nome_restaurante);
+            _setMeta('meta[property="og:site_name"]',   cfg.nome_restaurante);
+            _setMeta('meta[property="og:description"]', _desc);
+            _setMeta('meta[property="og:image"]',       iconUrl);
+            _setMeta('meta[property="og:url"]',         window.location.href);
+            _setMeta('meta[name="twitter:title"]',       cfg.nome_restaurante);
+            _setMeta('meta[name="twitter:description"]', _desc);
+            _setMeta('meta[name="twitter:image"]',       iconUrl);
+            }
+        } catch(_) { /* fallback: manifest e OG tags estáticos */ }
+        })();
     </script>
     <script>
         // Registro do Service Worker para PWA

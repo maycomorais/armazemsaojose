@@ -607,12 +607,14 @@ select.form-control, select.input-modern {
 .pdv-layout {
     display: grid;
     grid-template-columns: 1fr 380px;
+    grid-template-rows: 1fr;    /* 🔧 uma linha, altura fixa do pai */
     height: calc(100vh - 160px);
     border-radius: 10px;
     overflow: hidden;
     border: 1px solid #ccc;
     gap: 1px;
     background: #ccc;
+    min-height: 0;              /* 🔧 permite encolher em telas menores */
 }
 
 /* ── Left column: Cart items ────────────────────────────── */
@@ -620,7 +622,10 @@ select.form-control, select.input-modern {
     display: flex;
     flex-direction: column;
     background: #fff;
-    overflow: hidden;
+    overflow: visible;      /* dropdown precisa flutuar (NÃO mudar) */
+    position: relative;
+    min-height: 0;          /* 🔧 permite encolher dentro da grid */
+    height: 100%;           /* 🔧 ancora a altura na célula da grid */
 }
 
 /* Busca de código de barras (sem grid de produtos abaixo) */
@@ -670,13 +675,30 @@ select.form-control, select.input-modern {
     border-top: none;
     border-radius: 0 0 10px 10px;
     box-shadow: 0 8px 24px rgba(0,0,0,0.15);
-    z-index: 999;
+    z-index: 99999;      /* 🔧 era 999 — subiu para ficar acima de tudo */
     max-height: 420px;
     overflow-y: auto;
     scrollbar-width: thin;
 }
 .pdv-busca-dropdown::-webkit-scrollbar { width: 4px; }
 .pdv-busca-dropdown::-webkit-scrollbar-thumb { background: #ddd; border-radius: 4px; }
+
+/* 🔧 Modo busca: mantém dropdown FLUTUANTE acima dos itens do carrinho.
+   (A regra anterior forçava position:static, prendendo-o dentro da coluna) */
+.pdv-col-esq.pdv-buscando .pdv-busca-dropdown {
+    position: absolute !important;
+    top: calc(100% - 2px) !important;
+    left: 10px !important;
+    right: 10px !important;
+    z-index: 99999 !important;
+    max-height: 420px !important;
+    overflow-y: auto !important;
+    border: 2px solid var(--primary, #1a7a2e) !important;
+    border-top: none !important;
+    border-radius: 0 0 10px 10px !important;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.22) !important;
+    background: #fff !important;
+}
 
 .pdv-resultado-item {
     display: flex;
@@ -873,7 +895,10 @@ select.form-control, select.input-modern {
 /* ── Right column: Payment ──────────────────────────────── */
 .pdv-col-dir {
     display: flex; flex-direction: column;
-    background: #fff; overflow-y: auto; overflow-x: hidden;
+    background: #fff;
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;          /* 🔧 mesma correção — evita travar com muitos campos */
 }
 .pdv-dir-titulo {
     padding: 9px 10px 7px;
@@ -925,7 +950,20 @@ select.form-control, select.input-modern {
 .pdv-dir-input:focus { border-color: var(--primary); }
 
 /* Item table */
-.pdv-dir-lista-wrap { flex: 1; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; min-height: 60px; }
+.pdv-dir-lista-wrap {
+    flex: 1 1 0;            /* 🔧 basis 0 = distribuição correta do espaço */
+    min-height: 0;          /* 🔧 libera o scroll — sem isso, nunca ativa */
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+}
+.pdv-dir-lista-wrap::-webkit-scrollbar { width: 6px; }
+.pdv-dir-lista-wrap::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+}
+.pdv-dir-lista-wrap::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 .pdv-dir-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; table-layout: fixed; }
 .pdv-dir-table thead th {
     padding: 4px 5px; text-align: left;
@@ -5124,10 +5162,13 @@ body.sidebar-collapsed .main-content {
   padding: 0;
   transition: color 0.15s;
 }
-.pt-filtros-limpar:hover { color: #475569; }
+.pt-filtros-limpar:hover { 
+    color: #475569; 
+}
+
 .pt-filtros-grid {
   display: grid;
-  grid-template-columns: 1.6fr 1fr 1fr 1fr 1.2fr;
+  grid-template-columns: 1.4fr 1fr 1.1fr 1fr 1fr 1fr;
   gap: 10px;
 }
 .pt-filtro-group {}
@@ -5245,7 +5286,12 @@ body.sidebar-collapsed .main-content {
 /* ── Products table header (redesign with Destaque column) ── */
 .produtos-table-header {
   display: grid;
-  grid-template-columns: 2.8fr 90px 130px 100px 70px 120px;
+  /* 🔧 CORREÇÃO: faltava a coluna de 32px do checkbox "selecionar todos".
+     Sem ela, o header tinha 6 colunas de grid pra 7 elementos (checkbox +
+     6 labels), o grid criava uma coluna implícita extra e empurrava
+     "Produto/Preço/Estoque/Validade/Destaque/Ações" um slot pra direita —
+     descasando do .produto-card (que sempre usou 7 colunas via inline style). */
+  grid-template-columns: 32px 2.8fr 90px 130px 100px 70px 120px;
   gap: 8px;
   padding: 8px 14px;
   font-size: 0.68rem;
@@ -5263,7 +5309,9 @@ body.sidebar-collapsed .main-content {
 /* Ensure products list has correct table layout */
 .produto-card {
   display: grid;
-  grid-template-columns: 2.8fr 90px 130px 100px 70px 120px;
+  /* 🔧 Mesma correção — mantém consistente com o header e com o inline
+     style que o JS já aplica em cada linha (admin.js: card.style.gridTemplateColumns) */
+  grid-template-columns: 32px 2.8fr 90px 130px 100px 70px 120px;
   gap: 8px;
   align-items: center;
   padding: 9px 14px;
@@ -6235,4 +6283,393 @@ td.pdv-item-card:last-child {
   height: 18px;
   margin: 0;
   accent-color: var(--primary);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   BUSCA PDV — modo resultado
+   ═══════════════════════════════════════════════════════════
+   ATENÇÃO: NÃO redefinir `position: static` aqui. Isso prendia
+   o dropdown dentro da coluna e empurrava os itens do carrinho.
+   O dropdown precisa continuar `position: absolute` (ver regra
+   `.pdv-busca-dropdown` acima) para flutuar sobre o conteúdo. */
+
+/* Esconde mesas + lista do carrinho enquanto a busca está ativa */
+.pdv-col-esq.pdv-buscando .pdv-mesas-bar,
+.pdv-col-esq.pdv-buscando .pdv-dir-lista-wrap {
+  display: none !important;
+}
+
+/* Reforça z-index/posição absoluta quando em modo busca.
+   Mantém o dropdown FLUTUANTE — nada de `position: static`. */
+.pdv-col-esq.pdv-buscando .pdv-busca-dropdown {
+  position: absolute !important;
+  top: calc(100% - 2px) !important;
+  left: 10px !important;
+  right: 10px !important;
+  z-index: 99999 !important;
+  max-height: 420px !important;
+  overflow-y: auto !important;
+  border: 2px solid var(--primary, #1a7a2e) !important;
+  border-top: none !important;
+  border-radius: 0 0 10px 10px !important;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.22) !important;
+  background: #fff !important;
+}
+
+/* Cards de resultado com respiro igual à referência */
+.pdv-col-esq.pdv-buscando .pdv-resultado-item {
+  padding: 12px 14px;
+  border-bottom: 1px solid #f1f5f9;
+}
+.pdv-col-esq.pdv-buscando .pdv-resultado-foto,
+.pdv-col-esq.pdv-buscando .pdv-resultado-foto-none {
+  width: 56px; height: 56px; border-radius: 10px;
+}
+.pdv-col-esq.pdv-buscando .pdv-resultado-nome {
+  font-size: 1rem; font-weight: 700;
+}
+.pdv-col-esq.pdv-buscando .pdv-resultado-preco {
+  font-size: 1rem; color: #1a7a2e; font-weight: 800;
+}
+
+/* ══════════════════════════════════════════════
+   ALERTAS DO DASHBOARD — Estoque & Validade
+   ══════════════════════════════════════════════ */
+#dash-alertas-wrap {
+  animation: fadeIn 0.3s ease;
+}
+
+.dash-alerta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+  border-left: 5px solid;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.dash-alerta:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.1);
+}
+
+.dash-alerta-vermelho {
+  background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+  border-left-color: #dc2626;
+}
+.dash-alerta-laranja {
+  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+  border-left-color: #d97706;
+}
+
+.dash-alerta-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.35rem;
+  flex-shrink: 0;
+}
+.dash-alerta-vermelho .dash-alerta-icon {
+  background: #fee2e2;
+  color: #dc2626;
+}
+.dash-alerta-laranja .dash-alerta-icon {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+.dash-alerta-body {
+  flex: 1;
+  min-width: 0;
+}
+.dash-alerta-title {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 3px;
+}
+.dash-alerta-sub {
+  font-size: 0.82rem;
+  color: #475569;
+  line-height: 1.55;
+}
+.dash-alerta-sub em {
+  color: #94a3b8;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.dash-alerta-btn {
+  flex-shrink: 0;
+  padding: 9px 16px;
+  border-radius: 9px;
+  border: none;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.dash-alerta-vermelho .dash-alerta-btn {
+  background: #dc2626;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(220,38,38,0.3);
+}
+.dash-alerta-laranja .dash-alerta-btn {
+  background: #d97706;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(217,119,6,0.3);
+}
+.dash-alerta-btn:hover { opacity: 0.9; transform: scale(1.02); }
+.dash-alerta-btn:active { transform: scale(0.97); }
+
+@media (max-width: 600px) {
+  .dash-alerta {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px 14px;
+  }
+  .dash-alerta-icon { width: 38px; height: 38px; font-size: 1.1rem; }
+  .dash-alerta-title { font-size: 0.86rem; }
+  .dash-alerta-sub { font-size: 0.78rem; }
+  .dash-alerta-btn { width: 100%; justify-content: center; }
+}
+
+/* ══════════════════════════════════════════════
+   CHIPS DE PRODUTO NOS ALERTAS DO DASHBOARD
+   ══════════════════════════════════════════════ */
+.dash-alerta-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.dash-alerta-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 16px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1.5px solid;
+  transition: all 0.15s ease;
+  font-family: inherit;
+  line-height: 1.2;
+  max-width: 100%;
+}
+.dash-alerta-chip:active { transform: scale(0.96); }
+
+.dash-alerta-chip .chip-nome {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
+
+.dash-alerta-chip .chip-qtd {
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: rgba(255,255,255,0.55);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Vermelho: estoque zerado ── */
+.dash-alerta-chip--zero {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #991b1b;
+}
+.dash-alerta-chip--zero:hover {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #fff;
+}
+.dash-alerta-chip--zero:hover .chip-qtd {
+  background: rgba(255,255,255,0.25);
+  color: #fff;
+}
+
+/* ── Laranja: estoque baixo ── */
+.dash-alerta-chip--baixo {
+  background: #ffedd5;
+  border-color: #fdba74;
+  color: #9a3412;
+}
+.dash-alerta-chip--baixo:hover {
+  background: #ea580c;
+  border-color: #ea580c;
+  color: #fff;
+}
+.dash-alerta-chip--baixo:hover .chip-qtd {
+  background: rgba(255,255,255,0.25);
+  color: #fff;
+}
+
+/* ── Laranja profundo: muito próximo de zerar ── */
+.dash-alerta-chip--critico {
+  background: #fed7aa;
+  border-color: #fb923c;
+  color: #7c2d12;
+}
+.dash-alerta-chip--critico:hover {
+  background: #c2410c;
+  border-color: #c2410c;
+  color: #fff;
+}
+.dash-alerta-chip--critico:hover .chip-qtd {
+  background: rgba(255,255,255,0.25);
+  color: #fff;
+}
+
+/* ── Chips de validade (mesmo esquema, mas em azul/roxo) ── */
+.dash-alerta-chip--vencido {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #991b1b;
+}
+.dash-alerta-chip--vencido:hover {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #fff;
+}
+.dash-alerta-chip--vencido:hover .chip-qtd {
+  background: rgba(255,255,255,0.25);
+  color: #fff;
+}
+
+.dash-alerta-chip--avencer {
+  background: #fef3c7;
+  border-color: #fcd34d;
+  color: #78350f;
+}
+.dash-alerta-chip--avencer:hover {
+  background: #d97706;
+  border-color: #d97706;
+  color: #fff;
+}
+.dash-alerta-chip--avencer:hover .chip-qtd {
+  background: rgba(255,255,255,0.25);
+  color: #fff;
+}
+
+/* ── Ajuste do body do alerta quando tem chips ── */
+.dash-alerta--com-chips {
+  align-items: flex-start;
+}
+.dash-alerta--com-chips .dash-alerta-icon { margin-top: 2px; }
+.dash-alerta--com-chips .dash-alerta-btn { margin-top: 4px; }
+
+@media (max-width: 600px) {
+  .dash-alerta-chip .chip-nome { max-width: 120px; }
+  .dash-alerta-chip { font-size: 0.72rem; padding: 4px 9px; }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   ALERTA DE PEDIDOS PENDENTES — Aba PDV
+   Usa as classes .dash-alerta* já existentes (consistência visual)
+   ══════════════════════════════════════════════════════════════ */
+
+/* Pulso no ícone — chama atenção sem ser cansativo */
+@keyframes _pdvAlertaPulse {
+  0%   { transform: scale(1);    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.55); }
+  50%  { transform: scale(1.08); box-shadow: 0 0 0 12px rgba(220, 38, 38, 0); }
+  100% { transform: scale(1);    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+}
+
+/* Pulso no próprio card — borda suave que respira */
+@keyframes _pdvAlertaGlow {
+  0%, 100% { box-shadow: 0 2px 10px rgba(220, 38, 38, 0.18); }
+  50%      { box-shadow: 0 4px 18px rgba(220, 38, 38, 0.32); }
+}
+
+#pdv-alerta-pedidos {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  animation: _pdvAlertaGlow 2s ease-in-out infinite;
+}
+#pdv-alerta-pedidos:hover {
+  transform: translateY(-1px);
+}
+#pdv-alerta-pedidos:active {
+  transform: scale(0.995);
+}
+
+/* Contador dentro do texto — destaca o número */
+#pdv-alerta-count {
+  display: inline-block;
+  background: #dc2626;
+  color: #fff;
+  font-weight: 800;
+  font-size: 0.95rem;
+  padding: 2px 10px;
+  border-radius: 12px;
+  margin-right: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Badge no ícone do menu lateral (injeta via JS) */
+#menu-pdv-badge {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 800;
+  border-radius: 9px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  box-shadow: 0 2px 6px rgba(220, 38, 38, 0.4);
+  animation: _pdvAlertaPulse 1.5s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Menu pai precisa ser position:relative para o badge ancorar */
+#menu-pdv { position: relative; }
+
+/* Sidebar recolhida: badge continua visível, só menor */
+.sidebar.collapsed #menu-pdv-badge {
+  right: 4px;
+  top: 6px;
+  min-width: 14px;
+  height: 14px;
+  font-size: 0.55rem;
+  padding: 0 3px;
+}
+
+/* Mobile: badge fica no canto superior direito do ícone */
+@media (max-width: 768px) {
+  #menu-pdv-badge {
+    top: 4px;
+    right: calc(50% - 22px);
+  }
+}
+
+/* No mobile, o card de alerta ocupa a largura toda com margem justa */
+@media (max-width: 768px) {
+  #pdv-alerta-pedidos {
+    margin: 10px 12px 4px !important;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px 14px !important;
+  }
+  #pdv-alerta-pedidos .dash-alerta-btn {
+    width: 100%;
+    justify-content: center;
+  }
 }
